@@ -1,95 +1,95 @@
-stop_id,stop_name,source_station_code,station_id,canonical_name,line_memberships,mapping_status
-AC,ANCOL,AC,open-krl:AC,Ancol,"[""Tanjung Priok""]",mapped_exact
-AK,ANGKE,AK,open-krl:AK,Angke,"[""Rangkasbitung"", ""Cikarang""]",mapped_exact
-BJD,BOJONGGEDE,BJD,open-krl:BJD,Bojonggede,"[""Bogor""]",mapped_exact
-BKS,BEKASI,BKS,open-krl:BKS,Bekasi,"[""Cikarang""]",mapped_exact
-BKST,BEKASI TIMUR,BKST,open-krl:BKST,Bekasi Timur,"[""Cikarang""]",mapped_exact
-BOI,BOJONG INDAH,BOI,open-krl:BOI,Bojong Indah,"[""Tangerang""]",mapped_exact
-BOO,BOGOR,BOO,open-krl:BOO,Bogor,"[""Bogor""]",mapped_exact
-BPR,BATU CEPER,BPR,open-krl:BPR,Batu Ceper,"[""Tangerang""]",mapped_exact
-BUA,BUARAN,BUA,open-krl:BUA,Buaran,"[""Cikarang""]",mapped_exact
-CBN,CIBINONG,CBN,open-krl:CBN,Cibinong,"[""Bogor""]",mapped_exact
-CC,CICAYUR,CC,open-krl:CC,Cicayur,"[""Rangkasbitung""]",mapped_exact
-CIT,CIBITUNG,CIT,open-krl:CIT,Cibitung,"[""Cikarang""]",mapped_exact
-CJT,CILEJIT,CJT,open-krl:CJT,Cilejit,"[""Rangkasbitung""]",mapped_exact
-CKI,CIKINI,CKI,open-krl:CKI,Cikini,"[""Bogor""]",mapped_exact
-CKL,CIKEUSAL,,,,,review_unmapped
-CKR,CIKARANG,CKR,open-krl:CKR,Cikarang,"[""Cikarang""]",mapped_exact
-CKY,CIKOYA,CKY,open-krl:CKY,Cikoya,"[""Rangkasbitung""]",mapped_exact
-CLG,CILEGON,,,,,review_unmapped
-CLT,CILEBUT,CLT,open-krl:CLT,Cilebut,"[""Bogor""]",mapped_exact
-CSK,CISAUK,CSK,open-krl:CSK,Cisauk,"[""Rangkasbitung""]",mapped_exact
-CT,CATANG,,,,,review_unmapped
-CTA,CITAYAM,CTA,open-krl:CTA,Citayam,"[""Bogor""]",mapped_exact
-CTR,CITERAS,CTR,open-krl:CTR,Citeras,"[""Rangkasbitung""]",mapped_exact
-CUK,CAKUNG,CUK,open-krl:CUK,Cakung,"[""Cikarang""]",mapped_exact
-CW,CAWANG,CW,open-krl:CW,Cawang,"[""Bogor""]",mapped_exact
-DAR,DARU,DAR,open-krl:DAR,Daru,"[""Rangkasbitung""]",mapped_exact
-DP,DEPOK,DP,open-krl:DP,Depok,"[""Bogor""]",mapped_exact
-DPB,DEPOK BARU,DPB,open-krl:DPB,Depok Baru,"[""Bogor""]",mapped_exact
-DRN,DUREN KALIBATA,DRN,open-krl:DRN,Duren Kalibata,"[""Bogor""]",mapped_exact
-DU,DURI,DU,open-krl:DU,Duri,"[""Rangkasbitung"", ""Tangerang"", ""Cikarang""]",mapped_exact
-GDD,GONDANGDIA,GDD,open-krl:GDD,Gondangdia,"[""Bogor""]",mapped_exact
-GRG,GROGOL,GRG,open-krl:GRG,Grogol,"[""Tangerang""]",mapped_exact
-GST,GANG SENTIONG,GST,open-krl:GST,Gang Sentiong,"[""Cikarang""]",mapped_exact
-JAKK,JAKARTA KOTA,JAKK,open-krl:JAKK,Jakarta Kota,"[""Bogor"", ""Tanjung Priok"", ""Cikarang""]",mapped_exact
-JAY,JAYAKARTA,JAY,open-krl:JAY,Jayakarta,"[""Bogor""]",mapped_exact
-JBU,JAMBU BARU,,,,,review_unmapped
-JIS,JAKARTA INTERNATIONAL STADIUM,JIS,open-krl:JIS,Jakarta International Stadium,"[""Tanjung Priok""]",mapped_exact
-JMU,JURANG MANGU,JMU,open-krl:JMU,Jurang Mangu,"[""Rangkasbitung""]",mapped_exact
-JNG,JATINEGARA,JNG,open-krl:JNG,Jatinegara,"[""Cikarang""]",mapped_exact
-JTK,JATAKE,JTK,open-krl:JTK,Jatake,"[""Rangkasbitung""]",mapped_exact
-JUA,JUANDA,JUA,open-krl:JUA,Juanda,"[""Bogor""]",mapped_exact
-KBY,KEBAYORAN,KBY,open-krl:KBY,Kebayoran,"[""Rangkasbitung""]",mapped_exact
-KDS,KALIDERES,KDS,open-krl:KDS,Kalideres,"[""Tangerang""]",mapped_exact
-KEN,KRENCENG,,,,,review_unmapped
-KLD,KLENDER,KLD,open-krl:KLD,Klender,"[""Cikarang""]",mapped_exact
-KLDB,KLENDER BARU,KLDB,open-krl:KLDB,Klender Baru,"[""Cikarang""]",mapped_exact
-KMO,KEMAYORAN,KMO,open-krl:KMO,Kemayoran,"[""Cikarang""]",mapped_exact
-KMT,KRAMAT,KMT,open-krl:KMT,Kramat,"[""Cikarang""]",mapped_exact
-KPB,KAMPUNG BANDAN,KPB,open-krl:KPB,Kampung Bandan,"[""Tanjung Priok"", ""Cikarang""]",mapped_exact
-KRA,KARANGANTU,,,,,review_unmapped
-KRI,KRANJI,KRI,open-krl:KRI,Kranji,"[""Cikarang""]",mapped_exact
-LNA,LENTENG AGUNG,LNA,open-krl:LNA,Lenteng Agung,"[""Bogor""]",mapped_exact
-MER,MERAK,,,,,review_unmapped
-MGB,MANGGA BESAR,MGB,open-krl:MGB,Mangga Besar,"[""Bogor""]",mapped_exact
-MJ,MAJA,MJ,open-krl:MJ,Maja,"[""Rangkasbitung""]",mapped_exact
-MRI,MANGGARAI,MRI,open-krl:MRI,Manggarai,"[""Bogor"", ""Rangkasbitung"", ""Tangerang"", ""Cikarang""]",mapped_exact
-MTR,MATRAMAN,MTR,open-krl:MTR,Matraman,"[""Cikarang""]",mapped_exact
-NMO,NAMBO,NMO,open-krl:NMO,Nambo,"[""Bogor""]",mapped_exact
-PDJ,PONDOK RANJI,PDJ,open-krl:PDJ,Pondok Ranji,"[""Rangkasbitung""]",mapped_exact
-PDRG,PONDOK RAJEG,PDRG,open-krl:PDRG,Pondok Rajeg,"[""Bogor""]",mapped_exact
-PI,PORIS,PI,open-krl:PI,Poris,"[""Tangerang""]",mapped_exact
-PLM,PALMERAH,PLM,open-krl:PLM,Palmerah,"[""Rangkasbitung""]",mapped_exact
-POC,PONDOK CINA,POC,open-krl:POC,Pondok Cina,"[""Bogor""]",mapped_exact
-POK,PONDOK JATI,POK,open-krl:POK,Pondok Jati,"[""Cikarang""]",mapped_exact
-PRP,PARUNG PANJANG,PRP,open-krl:PRP,Parung Panjang,"[""Rangkasbitung""]",mapped_exact
-PSE,PASAR SENEN,PSE,open-krl:PSE,Pasar Senen,"[""Cikarang""]",mapped_exact
-PSG,PESING,PSG,open-krl:PSG,Pesing,"[""Tangerang""]",mapped_exact
-PSM,PASAR MINGGU,PSM,open-krl:PSM,Pasar Minggu,"[""Bogor""]",mapped_exact
-PSMB,PASAR MINGGU BARU,PSMB,open-krl:PSMB,Pasar Minggu Baru,"[""Bogor""]",mapped_exact
-RJW,RAJAWALI,RJW,open-krl:RJW,Rajawali,"[""Cikarang""]",mapped_exact
-RK,RANGKASBITUNG,RK,open-krl:RK,Rangkasbitung,"[""Rangkasbitung""]",mapped_exact
-RU,RAWA BUNTU,RU,open-krl:RU,Rawa Buntu,"[""Rangkasbitung""]",mapped_exact
-RW,RAWA BUAYA,RW,open-krl:RW,Rawa Buaya,"[""Tangerang""]",mapped_exact
-SDM,SUDIMARA,SDM,open-krl:SDM,Sudimara,"[""Rangkasbitung""]",mapped_exact
-SG,SERANG,,,,,review_unmapped
-SRP,SERPONG,SRP,open-krl:SRP,Serpong,"[""Rangkasbitung""]",mapped_exact
-SUD,SUDIRMAN,SUD,open-krl:SUD,Sudirman,"[""Rangkasbitung"", ""Tangerang"", ""Cikarang""]",mapped_exact
-SUDB,SUDIRMAN BARU,SUDB,open-krl:SUDB,Sudirman Baru,"[""Rangkasbitung"", ""Tangerang"", ""Cikarang""]",mapped_exact
-SW,SAWAH BESAR,SW,open-krl:SW,Sawah Besar,"[""Bogor""]",mapped_exact
-TB,TAMBUN,TB,open-krl:TB,Tambun,"[""Cikarang""]",mapped_exact
-TEB,TEBET,TEB,open-krl:TEB,Tebet,"[""Bogor""]",mapped_exact
-TEJ,TENJO,TEJ,open-krl:TEJ,Tenjo,"[""Rangkasbitung""]",mapped_exact
-TGS,TIGARAKSA,TGS,open-krl:TGS,Tigaraksa,"[""Rangkasbitung""]",mapped_exact
-THB,TANAH ABANG,THB,open-krl:THB,Tanah Abang,"[""Rangkasbitung"", ""Tangerang"", ""Cikarang""]",mapped_exact
-THI,TANAH TINGGI,THI,open-krl:THI,Tanah Tinggi,"[""Tangerang""]",mapped_exact
-TKO,TAMAN KOTA,TKO,open-krl:TKO,Taman Kota,"[""Tangerang""]",mapped_exact
-TLM,METLAND TELAGAMURNI,TLM,open-krl:TLM,Metland Telagamurni,"[""Cikarang""]",mapped_exact
-TNG,TANGERANG,TNG,open-krl:TNG,Tangerang,"[""Tangerang""]",mapped_exact
-TNT,TANJUNG BARAT,TNT,open-krl:TNT,Tanjung Barat,"[""Bogor""]",mapped_exact
-TOJB,TONJONG BARU,,,,,review_unmapped
-TPK,TANJUNG PRIOK,TPK,open-krl:TPK,Tanjung Priok,"[""Tanjung Priok""]",mapped_exact
-UI,UNIV. INDONESIA,UI,open-krl:UI,Univ. Indonesia,"[""Bogor""]",mapped_exact
-UP,UNIV. PANCASILA,UP,open-krl:UP,Univ. Pancasila,"[""Bogor""]",mapped_exact
-WLT,WALANTAKA,,,,,review_unmapped
+stop_id,stop_name,source_station_code,station_id,canonical_name,line_memberships,mapping_status,scope_status,scope_reason,used_route_ids
+AC,ANCOL,AC,open-krl:AC,Ancol,"[""Tanjung Priok""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANJUNGPRIUK""]"
+AK,ANGKE,AK,open-krl:AK,Angke,"[""Rangkasbitung"", ""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG"", ""RANGKASBITUNG""]"
+BJD,BOJONGGEDE,BJD,open-krl:BJD,Bojonggede,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+BKS,BEKASI,BKS,open-krl:BKS,Bekasi,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+BKST,BEKASI TIMUR,BKST,open-krl:BKST,Bekasi Timur,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+BOI,BOJONG INDAH,BOI,open-krl:BOI,Bojong Indah,"[""Tangerang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANGERANG""]"
+BOO,BOGOR,BOO,open-krl:BOO,Bogor,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+BPR,BATU CEPER,BPR,open-krl:BPR,Batu Ceper,"[""Tangerang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANGERANG""]"
+BUA,BUARAN,BUA,open-krl:BUA,Buaran,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+CBN,CIBINONG,CBN,open-krl:CBN,Cibinong,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+CC,CICAYUR,CC,open-krl:CC,Cicayur,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+CIT,CIBITUNG,CIT,open-krl:CIT,Cibitung,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+CJT,CILEJIT,CJT,open-krl:CJT,Cilejit,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+CKI,CIKINI,CKI,open-krl:CKI,Cikini,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+CKL,CIKEUSAL,,,,,unmapped,out_of_scope,used_only_by_merak_route,"[""MERAK""]"
+CKR,CIKARANG,CKR,open-krl:CKR,Cikarang,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+CKY,CIKOYA,CKY,open-krl:CKY,Cikoya,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+CLG,CILEGON,,,,,unmapped,out_of_scope,used_only_by_merak_route,"[""MERAK""]"
+CLT,CILEBUT,CLT,open-krl:CLT,Cilebut,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+CSK,CISAUK,CSK,open-krl:CSK,Cisauk,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+CT,CATANG,,,,,unmapped,out_of_scope,used_only_by_merak_route,"[""MERAK""]"
+CTA,CITAYAM,CTA,open-krl:CTA,Citayam,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+CTR,CITERAS,CTR,open-krl:CTR,Citeras,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+CUK,CAKUNG,CUK,open-krl:CUK,Cakung,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+CW,CAWANG,CW,open-krl:CW,Cawang,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+DAR,DARU,DAR,open-krl:DAR,Daru,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+DP,DEPOK,DP,open-krl:DP,Depok,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+DPB,DEPOK BARU,DPB,open-krl:DPB,Depok Baru,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+DRN,DUREN KALIBATA,DRN,open-krl:DRN,Duren Kalibata,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+DU,DURI,DU,open-krl:DU,Duri,"[""Rangkasbitung"", ""Tangerang"", ""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG"", ""RANGKASBITUNG"", ""TANGERANG""]"
+GDD,GONDANGDIA,GDD,open-krl:GDD,Gondangdia,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+GRG,GROGOL,GRG,open-krl:GRG,Grogol,"[""Tangerang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANGERANG""]"
+GST,GANG SENTIONG,GST,open-krl:GST,Gang Sentiong,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+JAKK,JAKARTA KOTA,JAKK,open-krl:JAKK,Jakarta Kota,"[""Bogor"", ""Tanjung Priok"", ""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR"", ""CIKARANG"", ""TANJUNGPRIUK""]"
+JAY,JAYAKARTA,JAY,open-krl:JAY,Jayakarta,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+JBU,JAMBU BARU,,,,,unmapped,out_of_scope,used_only_by_merak_route,"[""MERAK""]"
+JIS,JAKARTA INTERNATIONAL STADIUM,JIS,open-krl:JIS,Jakarta International Stadium,"[""Tanjung Priok""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANJUNGPRIUK""]"
+JMU,JURANG MANGU,JMU,open-krl:JMU,Jurang Mangu,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+JNG,JATINEGARA,JNG,open-krl:JNG,Jatinegara,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+JTK,JATAKE,JTK,open-krl:JTK,Jatake,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+JUA,JUANDA,JUA,open-krl:JUA,Juanda,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+KBY,KEBAYORAN,KBY,open-krl:KBY,Kebayoran,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+KDS,KALIDERES,KDS,open-krl:KDS,Kalideres,"[""Tangerang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANGERANG""]"
+KEN,KRENCENG,,,,,unmapped,out_of_scope,used_only_by_merak_route,"[""MERAK""]"
+KLD,KLENDER,KLD,open-krl:KLD,Klender,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+KLDB,KLENDER BARU,KLDB,open-krl:KLDB,Klender Baru,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+KMO,KEMAYORAN,KMO,open-krl:KMO,Kemayoran,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+KMT,KRAMAT,KMT,open-krl:KMT,Kramat,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+KPB,KAMPUNG BANDAN,KPB,open-krl:KPB,Kampung Bandan,"[""Tanjung Priok"", ""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG"", ""TANJUNGPRIUK""]"
+KRA,KARANGANTU,,,,,unmapped,out_of_scope,used_only_by_merak_route,"[""MERAK""]"
+KRI,KRANJI,KRI,open-krl:KRI,Kranji,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+LNA,LENTENG AGUNG,LNA,open-krl:LNA,Lenteng Agung,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+MER,MERAK,,,,,unmapped,out_of_scope,used_only_by_merak_route,"[""MERAK""]"
+MGB,MANGGA BESAR,MGB,open-krl:MGB,Mangga Besar,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+MJ,MAJA,MJ,open-krl:MJ,Maja,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+MRI,MANGGARAI,MRI,open-krl:MRI,Manggarai,"[""Bogor"", ""Rangkasbitung"", ""Tangerang"", ""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR"", ""CIKARANG"", ""RANGKASBITUNG"", ""TANGERANG""]"
+MTR,MATRAMAN,MTR,open-krl:MTR,Matraman,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+NMO,NAMBO,NMO,open-krl:NMO,Nambo,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+PDJ,PONDOK RANJI,PDJ,open-krl:PDJ,Pondok Ranji,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+PDRG,PONDOK RAJEG,PDRG,open-krl:PDRG,Pondok Rajeg,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+PI,PORIS,PI,open-krl:PI,Poris,"[""Tangerang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANGERANG""]"
+PLM,PALMERAH,PLM,open-krl:PLM,Palmerah,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+POC,PONDOK CINA,POC,open-krl:POC,Pondok Cina,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+POK,PONDOK JATI,POK,open-krl:POK,Pondok Jati,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+PRP,PARUNG PANJANG,PRP,open-krl:PRP,Parung Panjang,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+PSE,PASAR SENEN,PSE,open-krl:PSE,Pasar Senen,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+PSG,PESING,PSG,open-krl:PSG,Pesing,"[""Tangerang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANGERANG""]"
+PSM,PASAR MINGGU,PSM,open-krl:PSM,Pasar Minggu,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+PSMB,PASAR MINGGU BARU,PSMB,open-krl:PSMB,Pasar Minggu Baru,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+RJW,RAJAWALI,RJW,open-krl:RJW,Rajawali,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+RK,RANGKASBITUNG,RK,open-krl:RK,Rangkasbitung,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""MERAK"", ""RANGKASBITUNG""]"
+RU,RAWA BUNTU,RU,open-krl:RU,Rawa Buntu,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+RW,RAWA BUAYA,RW,open-krl:RW,Rawa Buaya,"[""Tangerang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANGERANG""]"
+SDM,SUDIMARA,SDM,open-krl:SDM,Sudimara,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+SG,SERANG,,,,,unmapped,catalog_only,listed_in_stops_txt_but_unused_in_stop_times,[]
+SRP,SERPONG,SRP,open-krl:SRP,Serpong,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+SUD,SUDIRMAN,SUD,open-krl:SUD,Sudirman,"[""Rangkasbitung"", ""Tangerang"", ""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG"", ""RANGKASBITUNG"", ""TANGERANG""]"
+SUDB,SUDIRMAN BARU,SUDB,open-krl:SUDB,Sudirman Baru,"[""Rangkasbitung"", ""Tangerang"", ""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG"", ""RANGKASBITUNG"", ""TANGERANG""]"
+SW,SAWAH BESAR,SW,open-krl:SW,Sawah Besar,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+TB,TAMBUN,TB,open-krl:TB,Tambun,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+TEB,TEBET,TEB,open-krl:TEB,Tebet,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+TEJ,TENJO,TEJ,open-krl:TEJ,Tenjo,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+TGS,TIGARAKSA,TGS,open-krl:TGS,Tigaraksa,"[""Rangkasbitung""]",mapped_exact,in_scope,used_by_in_scope_route,"[""RANGKASBITUNG""]"
+THB,TANAH ABANG,THB,open-krl:THB,Tanah Abang,"[""Rangkasbitung"", ""Tangerang"", ""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG"", ""RANGKASBITUNG"", ""TANGERANG""]"
+THI,TANAH TINGGI,THI,open-krl:THI,Tanah Tinggi,"[""Tangerang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANGERANG""]"
+TKO,TAMAN KOTA,TKO,open-krl:TKO,Taman Kota,"[""Tangerang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANGERANG""]"
+TLM,METLAND TELAGAMURNI,TLM,open-krl:TLM,Metland Telagamurni,"[""Cikarang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""CIKARANG""]"
+TNG,TANGERANG,TNG,open-krl:TNG,Tangerang,"[""Tangerang""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANGERANG""]"
+TNT,TANJUNG BARAT,TNT,open-krl:TNT,Tanjung Barat,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+TOJB,TONJONG BARU,,,,,unmapped,out_of_scope,used_only_by_merak_route,"[""MERAK""]"
+TPK,TANJUNG PRIOK,TPK,open-krl:TPK,Tanjung Priok,"[""Tanjung Priok""]",mapped_exact,in_scope,used_by_in_scope_route,"[""TANJUNGPRIUK""]"
+UI,UNIV. INDONESIA,UI,open-krl:UI,Univ. Indonesia,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+UP,UNIV. PANCASILA,UP,open-krl:UP,Univ. Pancasila,"[""Bogor""]",mapped_exact,in_scope,used_by_in_scope_route,"[""BOGOR""]"
+WLT,WALANTAKA,,,,,unmapped,out_of_scope,used_only_by_merak_route,"[""MERAK""]"
