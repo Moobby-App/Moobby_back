@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+src/mooby/db/source_reader.py
+src/mooby_back.egg-info/PKG-INFO
+src/mooby_back.egg-info/SOURCES.txt
+src/mooby_back.egg-info/dependency_links.txt
+src/mooby_back.egg-info/requires.txt
+src/mooby_back.egg-info/top_level.txt

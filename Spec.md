@@ -107,12 +107,13 @@ The `app_api` contract should contain only the fields required by the applicatio
 
 Exact table names may be selected during migration design, but the implementation must represent these logical records:
 
-- **Reference stations:** canonical station ID, display name, aliases, and station latitude/longitude. Coordinates describe stations only.
-- **Reference lines and memberships:** line identity plus `line_stations(line_id, seq, station_id, direction)` or an equivalent ordered relation. Sequence and direction are required to reason about routes and stations between endpoints.
+- **Reference station master:** reuse the existing `reference.krl_stations` as the canonical station source where available. It contains `station_id`, `source_station_code`, `canonical_name`, `aliases`, station coordinates, `line_memberships`, and `source_sha256`. Do not duplicate the station master or silently modify its live rows. Coordinates describe stations only.
+- **Line/path catalog:** represent a line separately from its physical route paths. A line can have multiple branches or corridor variants, such as Cikarang services via Manggarai versus Pasar Senen, or a Bogor-line branch to Nambo. Store a stable path/variant ID, line identity, configured direction, endpoints or terminus, optional reviewed `via` label, source feed/version digest, and effective date.
+- **Ordered path stations:** use an ordered relation such as `line_path_stations(path_id, seq, station_id)` or an equivalent relation carrying line, path variant, direction, sequence, and station. A single flat `line_stations(line_id, seq, station_id, direction)` sequence is insufficient when a line branches or has distinct physical paths. A trip's stop pattern is not itself a canonical physical path: local, short-turn, and skip-stop services can omit stations while following the same corridor.
 - **Processing queue:** source snapshot ID, state, attempt count, lease/claim metadata, next retry time, and last error category. Queue records are operational metadata; source payload remains in `collection`.
 - **Processing run/version:** source snapshot ID, run ID/version, code/rule/model versions, source digest, start/end times, and processing outcome.
 - **Structured event version:** event identity, version, event kind (`station` or `segment`), category, station/line or segment associations, event time, source publication/first-seen/freshness timestamps, certainty, verification status, publication status, curated title/summary, and provenance to one or more source snapshots.
-- **Segment disruption:** line ID, start station ID, end station ID, and direction. Resolve the affected ordered station range using `line_stations`; do not reduce a segment incident to one station.
+- **Segment disruption:** line ID, start station ID, end station ID, and direction, plus a resolved path variant when needed to distinguish branches. Resolve the affected ordered station range using the applicable ordered path; do not reduce a segment incident to one station or infer a unique path where endpoints are ambiguous.
 - **Evidence:** source snapshot reference, exact internal quote copied from the immutable original text, and source metadata. Store the quote in `nlp`, validate it as an exact substring of the original, and use it for audit/publication validation only. The app receives source metadata, not the quote.
 - **Embedding:** vector associated with an event version and embedding model/version. The vector dimension must match the pinned model artifact.
 - **Skip/error record:** source snapshot ID, reason code, processing stage, model/rule version, and timestamp. Keep malformed model output, valid policy rejection, unmapped station, irrelevant content, and transient infrastructure failure as different reason categories.
@@ -122,8 +123,19 @@ Use database constraints for required identifiers and uniqueness. A new processi
 
 ### 6.3 Reference-data requirements
 
-- Maintain canonical station IDs and a normalized alias table/dictionary for abbreviations, colloquial names, and spelling variants.
-- Maintain ordered line membership with direction and sequence. Line membership without order is insufficient for route-aware answers.
+- Reuse `reference.krl_stations` for canonical stations, source station codes, aliases, coordinates, and line memberships where available. Preserve `station_id` as the internal identifier and map external feed stop IDs through an explicit, audited crosswalk (for the inspected Open-KRL sample, GTFS `stop_id` matched `source_station_code`; verify the full feed before loading).
+- `line_memberships` only states membership; it does not encode station order, direction, or physical path. Do not infer ordering from array position, station coordinates, station names, or membership order.
+- Maintain line path variants and ordered path-station relations with direction and sequence. Distinguish physical path variants from trip stop patterns. A trip pattern that skips stops or terminates early must not automatically create a new physical path or remove omitted stations from the canonical corridor.
+- Treat GTFS `trip_headsign` as a destination hint, not a canonical direction identifier. `service_id` describes a service calendar, not direction. Group and inspect trips using their route, headsign, service, and `stop_sequence`, then review differences before deriving canonical path variants.
+- Record the route-feed source, license/attribution, feed digest, effective date, and reference-data version. The initial implementation scope is the five lines present in `reference.krl_stations`; `MERAK` remains out of scope until separately decided. The Open-KRL v2 crosswalk audit found 84 exact `stop_id`–`source_station_code` matches out of 94 GTFS stops. Nine unmatched stops are used by the `MERAK` route; `SG` (`SERANG`) is present in `stops.txt` but not referenced by this feed's `stop_times.txt`. Keep these statuses explicit; do not assign them to one of the five lines.
+- The inspected Open-KRL v2 build reported 0 itinerary trips and 1,143 reconstructed trips. The five in-scope routes produced 65 distinct ordered stop sequences. Treat those sequences as feed candidates, not as automatically authoritative line paths. Official KAI Commuter materials confirm the broad network topology: the Nambo branch connects through the Citayam–Cibinong corridor, and Cikarang operates alternative loop corridors via Manggarai and via Pasar Senen, rejoining at Jatinegara. The observed Bogor-line branch sequence Citayam → Pondok Rajeg → Cibinong → Nambo is consistent with KAI Commuter's confirmation that Pondok Rajeg lies between Citayam and Cibinong and was reactivated for commuter service. The Depok–Nambo trip is a short-turn on this branch, not a separate physical path. The two Kampung Bandan–Bekasi sequences (13 and 15 stops) traverse different corridors and are not skip-stop variants. See the [KAI Commuter 2024 route map and line descriptions](https://kci.id/files/download/annual_report/AR%20KCI%2019082024%20LR%20-%20LK%20under%2010MB.pdf), the [KAI Commuter Pondok Rajeg announcement](https://www.kci.id/informasi-publik/berita/pengguna-commuter-line-sudah-bisa-naik-dan-turun-di-stasiun-pondok-rajeg-uji-coba-operasional-commuter-line-di-stasiun-pondok-rajeg-sebanyak-24-perjalanan), and its [Cikarang loop-operation notice](https://www.kci.id/index.php/informasi-publik/berita/kai-commuter-persiapkan-perubahan-pola-operasi-perjalanan-krl-terkait-pelaksanaan-so-5-stasiun). These sources validate corridor topology; exact canonical ordered sequences still need a trusted, date-matched operational source.
+- **Tangerang pattern status:** the official May 2026 timetable confirms the Tangerang branch order Tangerang → Tanah Tinggi → Batu Ceper → Poris → Kalideres → Rawa Buaya → Bojong Indah → Taman Kota → Pesing → Grogol → Duri, matching the longest feed pattern. The same timetable says train 2013A (Tangerang–Duri) continues as train 2014B to Manggarai. Therefore the observed Duri → Tanah Abang → Sudirman Baru → Sudirman → Manggarai pattern is **confirmed as a through-service continuation at the destination level**, not a new physical Tangerang path; model its Tangerang branch and shared-corridor continuation as separate path segments/service legs. The reverse Manggarai → Duri pattern has not yet been matched to a specific official train number, so mark it **unconfirmed at trip level** and do not treat it as a separate physical route. See the [KAI Commuter May 2026 timetable](https://kci.id/files/download/documents/Jadwal%20Commuter%20Line%20Jabodetabek%20-%20Update%20Mei%202026.pdf).
+- **Sudirman Baru (`SUDB`) status:** this is not simply a bad station match. KAI Commuter announced that passenger boarding/alighting service previously at Karet was transferred to Sudirman Baru/BNI City from 2026-09-01 during integration works scheduled through 2026-12-31. This period overlaps the inspected GTFS captures (2026-09-24 and 2026-10-11). Mark the transfer as **confirmed temporary passenger-service substitution**. Do not infer from that notice alone that Sudirman Baru is a permanent physical stop or a separate permanent path station; retain its effective dates and the unresolved physical/path identity. See the [KAI Commuter 2026 integration notice](https://www.kci.id/informasi-publik/berita/pekerjaan-integrasi-stasiun-karet-stasiun-sudirman-baru-bni-city-dimulai-per1-september-2026-layanan-naik-dan-turun-pengguna-commuter-line-dialihkan-ke-stasiun-sudirman-baru-bni-city).
+- **Rangkasbitung ordering:** the feed's longest pattern contains Jatake between Cicayur and Parung Panjang. KAI Commuter confirms Jatake is on the Tanah Abang–Rangkasbitung line and lies between Cicayur and Parung Panjang; the station entered service on 2026-01-28. This validates that ordered segment ([KAI Commuter Jatake notice](https://www.kci.id/informasi-publik/berita/stasiun-jatake-setelah-empat-hari-beroperasi-telah-melayani-lima-ribu-lebih-pengguna-commuter-line)). The remaining feed stop sequence matches the broad order in KAI Commuter's 2024 route map; retain the feed digest/effective date in any imported path version.
+- **Tanjung Priok ordering:** the official 2026-04-15 timetable lists the base path Jakarta Kota → Kampung Bandan → Ancol → Tanjung Priok and the reverse. KAI Commuter then announced limited JIS service beginning 2026-06-22 from the 13:00 trip; JIS is an effective-dated stop/service variant, not a timeless assumption that every trip calls there. The feed's JIS insertion is compatible with the later service period, but its pattern CSV does not retain per-trip times, so it cannot prove that all listed trips stop at JIS. See the [April 2026 timetable](https://kci.id/files/download/documents/Jadwal%20Commuter%20Line%20Jabodetabek%20-%20Update%2015%20April%202026.pdf) and the [KAI Commuter JIS service notice](https://kci.id/informasi-publik/berita/menhub-ri-dudy-purwagandhi-dan-gubernur-jakarta-pramono-resmikan-stasiun-jis).
+- Official route maps/timetables now support the broad ordered corridors for all five in-scope lines, including the two Cikarang loop alternatives and the Bogor/Nambo branch. Remaining uncertainty is trip-level/effective-dated service behavior, not whether those broad physical corridors exist. Preserve service stop substitutions and through-running as dated trip/service patterns rather than inventing permanent physical paths. Re-run this assessment whenever the source feed changes; observed counts and findings are a discovery snapshot, not permanent constraints.
+- The inspected Open-KRL v2 export digest is `b7070274011d1be1da0919e1210f8728df454d0d5964276d79320df26e40ab17`. Its route/headsign groups contain multiple stop patterns. Re-run this quality assessment whenever the source feed changes; observed counts and findings are a discovery snapshot, not permanent constraints.
+- The current audit found all 84 station rows unique with valid coordinates, but all alias arrays empty. Exact canonical-name/code matching can work; aliases must be curated before relying on abbreviations or colloquial station names. Revalidate these counts and alias coverage when importing a new reference version.
 - Normalize reference names and IDs during import, and detect leading/trailing whitespace, case/character confusables, malformed coordinates, and duplicate aliases.
 - `rapidfuzz` may return candidate stations and scores to a review workflow. It must never assign a station automatically based on fuzzy score alone.
 - If a post names a station but has no coordinates, resolve the station by exact/alias rules when possible. Do not require incident coordinates.
@@ -152,7 +164,7 @@ Required behavior:
 3. **Create a derived processing copy:** apply versioned Python normalization only to the derived text used for classification, extraction, and embeddings. Store the normalization/rules version.
 4. **Classify relevance and category:** use a configured classifier. The scikit-learn character TF-IDF + logistic-regression model is the baseline. IndoBERTweet fine-tuning is the higher-capability option for relevant/not-relevant and category labels. Store model artifact version/digest and prediction metadata. A non-relevant post is recorded as skipped with a reason rather than disappearing.
 5. **Extract structured fields:** identify station mentions, line, category, event time, and evidence spans. Use versioned rules and model output validation. Never treat untrusted model text as executable instructions.
-6. **Resolve station references:** use canonical IDs, aliases, and line memberships. Coordinates are not required for a named station. Fuzzy matching is advisory only. A non-matching station creates an explicit unmapped outcome and skip/review record.
+6. **Resolve station references and paths:** use the canonical station master, audited source-code crosswalk, aliases, line memberships, and reviewed path variants. Coordinates are not required for a named station. Fuzzy matching is advisory only. A non-matching station creates an explicit unmapped outcome and skip/review record. If multiple paths remain possible, retain the ambiguity rather than selecting one silently.
 7. **Parse time:** use regex/rules for explicit values such as `08.15` and relative phrases such as `tadi pagi` and `barusan`. Resolve relative phrases against the source post's publication timestamp in `Asia/Jakarta`, never against the worker's processing time. Retain the raw phrase, post publication time, parsed value, time zone, parsing method/rule version, and certainty. If the publication timestamp is missing or the phrase is ambiguous, preserve that uncertainty; do not fabricate precision.
 8. **Generate event embedding:** create a vector with the pinned `multilingual-e5-small` artifact from the approved derived text. Record the model name/version/digest and input version. Use the same compatible embedding model for query vectors.
 9. **Correlate and deduplicate:** use vector similarity only to produce candidates. Confirm cluster membership using deterministic, versioned rules that require the same resolved station, a compatible time window, and a compatible category. The time window and category compatibility map are configuration data and must be evaluated. Do not use number of posts as verification.
@@ -178,7 +190,7 @@ Correlation is a batch step that prevents repeated source posts about one disrup
 3. Apply deterministic, versioned event-identity rules to accept or reject a merge. Store the ruleset version and the evidence used for the decision.
 4. Preserve individual source snapshots, source objects, and internal exact quotes under a correlated event. Deduplication must not discard provenance.
 5. A count of related posts may be displayed only as a count of reports if the product chooses to show it; it must not be described as verification or proof.
-6. For station events, require compatible resolved station, time window, and category. For segment events, compare line, ordered endpoints, direction, time window, and compatible category.
+6. For station events, require compatible resolved station, time window, and category. For segment events, compare line, ordered endpoints, direction, and path variant when resolved, plus time window and compatible category. Do not merge segments on different branches merely because they share a line label.
 7. If no station/segment, time, or category combination can be resolved safely, do not auto-merge. Keep separate records or route them to review according to policy.
 
 ## 9. Station and route resolution
@@ -201,8 +213,8 @@ A fuzzy candidate is not an accepted match. Unresolved station references remain
 
 - Use station coordinates only to map a user's GPS location to the nearest eligible reference station.
 - Do not treat a source post's coordinates as an incident location unless separately validated and explicitly approved by product policy.
-- Model a disruption affecting a stretch of line (for example, Tanah Abang–Rangkasbitung not operating) as a segment event with `line_id`, `start_station_id`, `end_station_id`, and `direction`. Resolve the covered station range from ordered `line_stations`; do not store the incident as a single-station event.
-- Route requests must use ordered `line_stations` membership and direction. Resolve route station IDs first, then query station events and segment events that overlap the route in the correct direction.
+- Model a disruption affecting a stretch of line (for example, Tanah Abang–Rangkasbitung not operating) as a segment event with `line_id`, `start_station_id`, `end_station_id`, and `direction`; include a path ID/variant when branches make it necessary. Resolve the covered station range from the applicable ordered path; do not store the incident as a single-station event.
+- Route requests must use ordered path stations and direction. Resolve route station IDs and any applicable path variant first, then query station events and segment events that overlap the route in the correct direction. If endpoints do not identify a unique path, preserve that ambiguity instead of claiming a precise range.
 - If a user asks by station name without GPS coordinates, station-name matching is sufficient.
 - If a source event has a station but no coordinates, it remains eligible for station-based search if other publication rules pass.
 - If an event's station does not map to the reference table, do not guess. Record an unmapped station outcome; do not make it appear under a guessed station. If the source describes a line segment, preserve its endpoints and direction only when each can be resolved; otherwise record the unresolved fields and do not claim a precise affected range.
@@ -248,7 +260,7 @@ A response should include freshness and certainty for each result and a `source`
 ### 11.2 Path A — GPS, route, or station lookup
 
 1. Receive coordinates, route, or station-name query from the app through the gateway.
-2. Resolve GPS to nearest station using reference station coordinates, or expand a route to ordered station IDs using `line_stations`.
+2. Resolve GPS to nearest station using reference station coordinates, or expand a route using the applicable ordered path variant and its station sequence.
 3. If only a station name is supplied, use exact/alias resolution; GPS is not mandatory.
 4. If no station maps, return an explicit unresolved/no-match state and do not substitute a nearby or guessed station.
 5. Query eligible event versions using SQL and structured station IDs. Apply the database-clock 24-hour window, verification/publication status, and freshness rules before ranking.
@@ -316,13 +328,13 @@ If PostgreSQL functions need privileged access to `nlp`, use a narrowly scoped, 
 
 ### 14.1 Database and role ownership boundary
 
-It is not yet specified whether `nlp` and `app_api` will be created in the existing live Supabase database that already contains `collection`.
+The initial development target is the existing Supabase **development database** that already contains `collection`. This development database is separate from the live database. Apply development migrations only to this development database; never apply them to live as part of this implementation phase.
 
-- If the new schemas share the existing live database, create new owner roles dedicated to the new schemas. Grant ownership only over the newly created schemas and objects.
-- Do not alter, transfer, rename, or broaden privileges on existing roles or ownership associated with `collection` or the Collector.
-- Keep migrations additive. Grant or revoke privileges only on explicitly named new schemas and objects; do not use broad grants or ownership changes against existing objects.
-- Runtime worker and gateway roles must not be schema-owner roles. Use separate least-privilege runtime roles.
-- If the new schemas use a separate database, document the service/connectivity boundary. Do not assume cross-database schema references or grants work like same-database access.
+- `collection` remains an existing, read-only source boundary for this project. The worker may read the minimum required source columns, but migrations and application code must not alter its schema objects, data, roles, grants, or ownership.
+- Create new owner roles dedicated to the new `nlp` and `app_api` schemas in development. Assign ownership only to those new schemas and their new objects.
+- Keep migrations additive and scoped to explicitly named new schemas and objects. Do not transfer, rename, broaden, or revoke privileges from existing roles, and do not change ownership or grants on `collection` objects.
+- Runtime worker and gateway roles must not be schema-owner roles. Use separate least-privilege runtime roles. Any source-read permission needed by the worker must be provided without changing existing `collection` role definitions or ownership; if that is not possible, stop and resolve the access boundary before applying migrations.
+- Production rollout topology and timing remain a separate future decision. No migration in this implementation phase is authorized for the live database. If a later production plan places the new schemas alongside `collection`, it must preserve the same no-change boundary for all existing `collection` objects, data, roles, grants, and ownership.
 
 ## 15. SQL migration requirements
 
@@ -331,14 +343,14 @@ Migrations are ordered, checked into Git, and applied in sequence. Each migratio
 The migration set must cover:
 
 1. Required extensions (including pgvector) and schema creation.
-2. New role and ownership boundaries, with least-privilege grants. If applying to the existing live database, create owners only for the new schemas and leave existing roles and ownership untouched.
-3. Reference tables/indexes for stations, aliases, lines, and ordered line memberships.
+2. New development-only role and ownership boundaries, with least-privilege grants scoped to new schemas and objects. Do not alter existing `collection` objects, data, roles, grants, or ownership. Production deployment requires a separately reviewed plan.
+3. Reference tables/indexes or approved read boundaries for canonical stations, aliases, lines, path variants, and ordered path stations. Reuse `reference.krl_stations` when available; do not make a duplicate station master. Reconcile feed-to-station mapping and route scope before loading paths.
 4. `nlp` queue, run/version, event, evidence, embedding, correlation, skip/error, and evaluation metadata structures.
 5. Constraints and uniqueness rules supporting snapshot idempotency and immutable versions.
 6. Vector dimension/index configuration aligned to the pinned embedding model.
 7. SQL indexes for event time, station associations, publication/verification state, route lookup, and queue claim patterns.
 8. `app_api` views/RPCs and column-level exposure rules.
-9. Grants and revokes for Collector, worker, migration, and gateway/API roles.
+9. Grants for new worker, migration, and gateway/API roles on explicitly named new schemas and objects. Do not change grants, roles, or ownership associated with `collection` or the Collector.
 10. Migration/version bookkeeping and documented rollback or forward-repair procedure.
 
 Do not put model inference or policy logic into opaque triggers. Keep workflow decisions in versioned Python code unless a narrowly scoped SQL function is required for safe atomic query behavior.
@@ -387,11 +399,11 @@ Do not create a single aggregate score that hides failures in critical measures.
 Automated tests should include:
 
 - Alias/canonical station matching, fuzzy suggestion non-acceptance, and unmapped outcomes.
-- Route expansion and ordered station behavior.
+- Route expansion over ordered path variants, including branches, alternative corridors, short-turn services, and skip-stop trip patterns.
 - Time parser examples (`08.15`, `tadi pagi`, `barusan`), relative-time anchoring to source publication time in Asia/Jakarta, ambiguity, timezone handling, and database-clock boundaries.
 - Normalized processing copy versus immutable original, internal exact-quote validation, and proof that app responses never include the quote.
 - Curated summaries composed from structured fields without copying source-post wording.
-- Segment events with line, endpoints, direction, and ordered `line_stations` expansion.
+- Segment events with line, endpoints, direction, and ordered path-variant expansion, including ambiguous endpoints and branch-specific behavior.
 - Classifier adapter output validation and malformed-versus-policy-rejected handling.
 - Embedding model/version compatibility and vector dimension.
 - Correlation rules for same/different station, time windows, and category compatibility.
@@ -424,7 +436,7 @@ Configuration should be explicit, versioned, and validated at startup. It should
 - Queue batch size, lease duration, retry limits, scheduler interval, and worker concurrency.
 - Active classifier, classifier artifact/version/digest, category taxonomy version, and thresholds.
 - Embedding model name/version/digest, vector dimension, and query runtime (`fastembed` or ONNX Runtime).
-- Station alias/reference-data version, fuzzy suggestion threshold for review only, route data version, and direction conventions.
+- Station alias/reference-data version, fuzzy suggestion threshold for review only, route/path variant data version, GTFS source feed digest/effective date, crosswalk version, and direction conventions.
 - Time parsing rules version, display timezone, freshness anchor policy, stale threshold (8h), expiration/request window (24h).
 - Correlation/deduplication rules version, compatible categories, and time-window settings.
 - Verification and publication policy version.
@@ -435,8 +447,8 @@ Secrets and environment-specific URLs must not be stored in the repository. Chan
 
 ## 19. Recommended implementation sequence
 
-1. Confirm whether the new schemas share the live database. Inspect and document the existing `collection` schema and stable snapshot/post ID without changing Collector behavior or existing roles/ownership.
-2. Define and load canonical station, alias, line, and ordered line-station reference data; add data-quality checks.
+1. Use the existing Supabase development database that contains `collection`; confirm its project identity and separation from live. Inspect and document the source schema and stable snapshot/post ID. New migrations target development only and must not change any `collection` objects, data, roles, grants, ownership, or Collector behavior.
+2. Reconcile the audited stop crosswalk, curate aliases, and review candidate path variants and ordered station sequences for the five-line scope; add data-quality checks. Keep `MERAK` out of scope and `SG` catalog-only unless a later scope decision changes that.
 3. Add ordered SQL migrations for `nlp`, roles, queue, event-version structures, evidence, embeddings, skip/error records, and indexes.
 4. Implement the Python 3.12 worker adapter and `FOR UPDATE SKIP LOCKED` claim/lease flow; prove retry safety and immutable versioning.
 5. Implement raw-text preservation, normalized derived text, classifier adapters (scikit-learn baseline first, IndoBERTweet as a later model option), station/segment/time extraction, and internal exact-quote validation.
@@ -462,14 +474,14 @@ The implementation is acceptable when all of the following are demonstrated:
 - Malformed output and valid policy rejection are separately represented and measured.
 - Duplicate candidates are constrained by station, time window, and compatible category; embedding similarity alone cannot merge or verify events.
 - Station-only posts without coordinates can resolve; unmapped station posts are not guessed and are recorded.
-- Segment events retain line, start/end stations, and direction and use ordered `line_stations` membership to determine the affected station range.
+- Segment events retain line, start/end stations, direction, and a path variant when needed; ordered path-station data determines the affected range. Ambiguous branch/path resolution is not presented as precise.
 - Verification/publication is enforced before an event becomes visible to `app_api`.
 - GPS/route lookups use structured SQL; free-text uses pgvector with station/time filters applied before similarity where available and a mandatory 24-hour DB-time bound always present.
 - Freshness is computed from the database clock: fresh through 8 hours, stale after 8 and through 24, expired after 24.
 - Empty matches do not imply normal service; source unavailability is a different response state.
 - The app reads only through the FastAPI gateway/NGROK path and `app_api`; it contains no database credentials and cannot access `collection` or raw `nlp` tables. `app_api` returns a curated conclusion and source object, not source-post text or `evidence_quote`.
 - The manually reviewed gold set has several hundred examples, about 100 or more positive examples, many hard negatives, and time/content-grouped splits.
-- If new schemas are added to the existing live database, only new schema-scoped owner roles/objects are created; existing roles and ownership remain untouched.
+- Development migrations run only in the Supabase development database containing `collection`. They do not alter `collection` objects, data, roles, grants, or ownership, and are never applied to live during this implementation phase. Any later live rollout requires a separately reviewed plan and new schema-scoped roles/objects while preserving every existing `collection` role and object owner.
 - The gold set and pytest suite cover station matching, time parsing, output validation, adapter behavior, idempotency, API boundaries, and both retrieval paths.
 - Monitoring reports recall on known disruptions, skipped-post count, and format failure rate separately from legitimate rejection rate.
 
@@ -477,7 +489,7 @@ The implementation is acceptable when all of the following are demonstrated:
 
 1. What exact stable ID in `collection` identifies an immutable post snapshot? If source rows can change, how is a new snapshot represented?
 2. Which timestamp is authoritative for freshness when extracted event time conflicts with source publication time? Confirm the `freshness_anchor_at` fallback policy. Relative language itself must use source publication time in Asia/Jakarta.
-3. What is the approved station/line/category taxonomy, alias governance workflow, segment endpoint/direction convention, and behavior for events that affect multiple stations or lines?
+3. What is the approved alias governance workflow, segment endpoint/direction convention, path-variant model, and behavior for events affecting multiple stations or lines? The initial scope is the five lines in `reference.krl_stations`; `MERAK` is deferred and `SG` is catalog-only in the inspected feed. Official KAI Commuter maps and 2026 timetables validate the broad ordered corridors, including Bogor/Nambo, Cikarang via Manggarai/Pasar Senen, the current Tangerang stop order and through-running continuation, Rangkasbitung with Jatake, and Tanjung Priok with a limited JIS service variant. The Open-KRL v2 feed remains reconstructed candidate data for per-trip patterns. Any route reference load must use source-version and effective-date fields, distinguish physical paths from through-running/short-turn/temporary-stop service patterns, and keep unresolved trip-level behavior explicit.
 4. What verification process and evidence are required for an event to become publishable? Is approval automated, human, or mixed?
 5. What time-window size and category-compatibility rules define duplicate candidates? These must be measured and versioned.
 6. Which classifier is the initial production model: scikit-learn baseline or fine-tuned IndoBERTweet? What thresholds satisfy the gold-set quality gate?
@@ -487,7 +499,7 @@ The implementation is acceptable when all of the following are demonstrated:
 10. What retention/deletion policy applies to source text, quotes, processing versions, embeddings, and logs?
 11. What user-visible wording and localization are required for stale results, unresolved stations, no matching results, and source unavailability?
 12. What numeric baseline thresholds are required for recall, precision, exact-quote validation, and format failure rate before publication?
-13. Will `nlp` and `app_api` be created in the existing live database or a separate database? If shared, approve new schema-scoped owner roles while preserving every existing role and object owner.
+13. What production rollout topology and approval process will be used for `nlp` and `app_api`? The implementation target is already decided: the existing Supabase development database containing `collection`, separate from live. Development migrations must not be applied to live, and must not change existing `collection` objects, data, roles, grants, or ownership.
 
 ## Appendix A — Suggested response shape
 
