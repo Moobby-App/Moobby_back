@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
@@ -55,7 +56,7 @@ def claim_batch(
         raise ValueError("batch_size and lease_seconds must be positive")
 
     with conn.transaction():
-        rows = conn.execute(
+        cursor = conn.execute(
             CLAIM_BATCH_SQL,
             {
                 "pipeline_version": pipeline_version,
@@ -63,9 +64,14 @@ def claim_batch(
                 "batch_size": batch_size,
                 "lease_seconds": lease_seconds,
             },
-        ).fetchall()
+        )
+        rows = cursor.fetchall()
+        columns = [column.name for column in cursor.description]
 
-    return [dict(row) for row in rows]
+    return [
+        dict(row) if isinstance(row, Mapping) else dict(zip(columns, row, strict=True))
+        for row in rows
+    ]
 
 
 def finish_attempt(
