@@ -10,8 +10,16 @@ CREATE ROLE mooby_app_api_gateway_dev
 CREATE ROLE mooby_app_api_login_dev
     LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 
+-- Allow the migration session to assume the view owner only while creating
+-- the schema projection; this membership is revoked before commit.
+GRANT mooby_app_api_owner_dev TO postgres
+    WITH INHERIT FALSE, SET TRUE, ADMIN FALSE;
 GRANT mooby_app_api_gateway_dev TO mooby_app_api_login_dev
     WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
+GRANT moobby_incident_readonly TO mooby_app_api_owner_dev
+    WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
+
+SET LOCAL ROLE mooby_nlp_owner_dev;
 
 ALTER TABLE nlp.event_versions
     ADD COLUMN severity text
@@ -23,8 +31,6 @@ COMMENT ON COLUMN nlp.event_versions.severity IS
 GRANT INSERT (severity)
 ON TABLE nlp.event_versions TO mooby_nlp_worker_dev;
 
-GRANT moobby_incident_readonly TO mooby_app_api_owner_dev
-    WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
 GRANT USAGE ON SCHEMA nlp TO mooby_app_api_owner_dev;
 GRANT SELECT (
     event_id, event_version, source_snapshot_id, event_kind,
@@ -50,6 +56,8 @@ GRANT SELECT (
     effective_since, effective_until
 )
 ON TABLE nlp.line_path_stations TO mooby_app_api_owner_dev;
+
+RESET ROLE;
 
 CREATE SCHEMA app_api AUTHORIZATION mooby_app_api_owner_dev;
 REVOKE ALL ON SCHEMA app_api FROM PUBLIC;
@@ -189,10 +197,11 @@ WHERE COALESCE(ev.event_at, ev.freshness_anchor_at, ev.first_seen_at)
 COMMENT ON VIEW app_api.published_disruptions IS
     'Latest verified and published event versions within the database-clock 24-hour window; app-safe projection only.';
 
-RESET ROLE;
-
 GRANT USAGE ON SCHEMA app_api TO mooby_app_api_gateway_dev;
 GRANT SELECT ON app_api.published_disruptions TO mooby_app_api_gateway_dev;
 REVOKE ALL ON app_api.published_disruptions FROM PUBLIC;
+
+RESET ROLE;
+REVOKE mooby_app_api_owner_dev FROM postgres;
 
 COMMIT;
