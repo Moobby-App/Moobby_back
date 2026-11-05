@@ -30,6 +30,7 @@ class DraftEvent:
     event_time_raw_phrase: str | None
     event_time_method: Literal["explicit", "relative_phrase", "unknown"]
     event_time_certainty: Literal["low", "medium", "high", "unknown"]
+    severity: Literal["light", "moderate", "severe"]
     title: str
     summary: str
     source_platform: str
@@ -76,13 +77,13 @@ def persist_draft_event(
             processing_run_id, event_kind, line_id, station_id,
             start_station_id, end_station_id, direction, path_id, path_version,
             event_at, event_time_raw_phrase, event_time_method,
-            event_time_certainty, title, summary
+            event_time_certainty, severity, title, summary
         )
         VALUES (
             %s, 1, %s, %s,
             %s, %s, %s,
             %s, %s, %s, %s, %s,
-            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
             %s, %s, %s
         )
         ON CONFLICT DO NOTHING
@@ -104,6 +105,7 @@ def persist_draft_event(
             draft.event_time_raw_phrase,
             draft.event_time_method,
             draft.event_time_certainty,
+            draft.severity,
             draft.title,
             draft.summary,
         ),

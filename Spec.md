@@ -320,6 +320,20 @@ A mismatch between event-vector and query-vector model versions must fail closed
 
 Ranking may combine semantic similarity, time/freshness, station/route match, category match, and configured certainty. The formula and thresholds must be versioned and evaluated against the available versioned evaluation set. Do not use post count as truth confidence. Structured Path A should primarily rank by deterministic relevance and event time; semantic similarity is not required for GPS/route lookups.
 
+### 11.5 Initial iOS disruption-feed contract
+
+The first app integration is the route-scoped disruption feed on the Home tab. Place the availability summary before the selected-route station timeline, provide a list screen for matching disruptions, and reuse the existing disruption-detail screen for an item. This placement does not change event eligibility or truth rules.
+
+The first gateway slice implements **Path A only** using canonical reference `station_id` values supplied for the selected route. Path B remains unavailable until compatible query embeddings and filtered vector retrieval are implemented and reviewed. A route with no supported station-ID mapping must not be silently mapped from display names or array positions.
+
+The initial read contract is `GET /api/v1/disruptions` with one or more bounded `station_id` query parameters plus bounded `limit` and `offset`. It returns an envelope with `availability`, database-derived `generated_at`, and `items`. `results` has one or more items; `no_match` has an empty item list and means only that no eligible matching report was found in the 24-hour search window; dependency/configuration failures use `source_unavailable` and a non-success HTTP status. Each item has a stable public event ID, curated `title` and `summary`, a station-or-segment object with canonical display names and known direction/path fields, nullable `severity`, nullable event time/certainty, `freshness` (`fresh` or `stale`), and an approved source object (`display_name`, HTTPS URL, and source publication time). The contract omits incident `category` while its taxonomy is undefined. It never returns source snapshot IDs, raw or normalized source text, exact evidence quotes, author data, internal notes, model details, or queue state.
+
+Path A matches a selected route when its station IDs intersect the event's station or resolved ordered segment range. The server applies publication/verification eligibility and the 24-hour database-clock window before returning data, computes freshness using the §10.2 event-time-or-first-seen anchor policy, and caps results and pagination. Unknown event time, severity, certainty, direction, or path remains null/unknown in the response; do not substitute source publication time for event time or draw a precise timeline range for unresolved location.
+
+On iOS, use an injected API client based on `URLSession` with explicit request/resource timeouts and typed decoding. Configure the base URL per build environment rather than hard-coding a tunnel URL. The app must not contain database credentials, NGROK credentials, or a reusable server secret. A stable development tunnel URL may be configured outside source control, but it does not provide API authentication. Before exposing the tunnel to an app build, select an authentication flow safe for its intended audience; an embedded shared bearer token is development-only and is not production authentication. Keep the service-side read-only database URL and auth secrets in server environment/secret storage.
+
+The first Home integration shows loading, `results`, `no_match`, and `source_unavailable` distinctly. `no_match` must not look like a green “normal service” indicator. `source_unavailable` remains visible in the summary area even when there are no event cards. A stale result is explicitly labeled; stale does not mean resolved. Use Indonesian copy initially, subject to product localization review. The feed and detail screens do not claim an event is officially confirmed merely because backend `verification_status` is `verified`.
+
 ## 12. Answer generation and result states
 
 The default answer is produced by deterministic Python templates using structured event fields. The answer includes, as applicable:
@@ -343,7 +357,7 @@ The optional Ollama `qwen2.5:7b-instruct` path is strictly a constrained phrasin
 
 `app_api` consists only of views and/or RPCs designed for the app. They must:
 
-- Return only approved display columns: title, curated summary/conclusion, station or affected segment, category, time, certainty, and a `source` object (publisher/display name, URL, and publication time as approved). Do not return `evidence_quote`, original post text, or normalized post text.
+- Return only approved display columns: stable public event ID, title, curated summary/conclusion, station or affected segment, severity when available, event time, certainty, freshness, and a `source` object (publisher/display name, URL, and publication time as approved). Omit incident category until its taxonomy is defined. Do not return `evidence_quote`, original post text, or normalized post text.
 - Include only events whose current version is eligible for publication and passes current request-time filters.
 - Enforce the mandatory 24-hour boundary and freshness calculation using database time.
 - Hide source author, raw post payload, normalized text, internal evidence quote, internal notes, model prompts, queue state, embeddings, and private IDs.
@@ -505,10 +519,11 @@ Secrets and environment-specific URLs must not be stored in the repository. Chan
 7. Implement deterministic correlation/deduplication rules and record embedding candidates separately from accepted event identity.
 8. Implement output validation, separate malformed-format and legitimate-rejection paths, automated verification/publication state, and auditable skip reasons.
 9. Create `app_api` views/RPCs with strict field projection and eligibility filters. Apply database-clock 24-hour and 8/24-hour freshness rules.
-10. Build FastAPI/Uvicorn endpoints for Path A and Path B; expose them through the configured NGROK tunnel for debug use. Verify the iOS app has no database credential or direct database route.
-11. Add deterministic response templates and explicit `results`, `no_match`, and `source_unavailable` states. Add optional Ollama rewriting only after template path and validation are stable.
-12. Train and report the exploratory baseline from the available labeled corpus, then expand the versioned evaluation set and pytest coverage; add CI/release thresholds after baseline measurement.
-13. Deploy worker scheduling with either `launchd` or cron, document operations and recovery, and monitor queue/evaluation metrics.
+10. Build the authenticated FastAPI/Pydantic Path A endpoint and typed response contract. Expose it through NGROK for development only after authentication and a dedicated read-only database identity are configured. Verify the iOS app has no database credential or direct database route.
+11. Integrate the iOS Home summary/list/detail against the Path A contract using an environment-specific base URL and an approved authentication flow. Confirm canonical station-ID mapping before enabling route filtering. Add Path B only after compatible query embeddings and filtered vector retrieval are available.
+12. Add deterministic response templates and explicit `results`, `no_match`, and `source_unavailable` states. Add optional Ollama rewriting only after template path and validation are stable.
+13. Train and report the exploratory baseline from the available labeled corpus, then expand the versioned evaluation set and pytest coverage; add CI/release thresholds after baseline measurement.
+14. Deploy worker scheduling with either `launchd` or cron, document operations and recovery, and monitor queue/evaluation metrics.
 
 ## 20. Acceptance criteria
 
@@ -543,12 +558,12 @@ The implementation is acceptable when all of the following are demonstrated:
 2. Which timestamp is authoritative for the one-hour intake gate and freshness when extracted event time conflicts with source publication time? Relative language itself must use source publication time in Asia/Jakarta.
 3. What is the approved alias governance workflow, segment endpoint/direction convention, path-variant model, and behavior for events affecting multiple stations or lines? The initial scope is the five lines in `reference.krl_stations`; `MERAK` is deferred and `SG` is catalog-only in the inspected feed. Official KAI Commuter maps and 2026 timetables validate the broad ordered corridors, including Bogor/Nambo, Cikarang via Manggarai/Pasar Senen, the current Tangerang stop order and through-running continuation, Rangkasbitung with Jatake, and Tanjung Priok with a limited JIS service variant. The Open-KRL v2 feed remains reconstructed candidate data for per-trip patterns. Any route reference load must use source-version and effective-date fields, distinguish physical paths from through-running/short-turn/temporary-stop service patterns, and keep unresolved trip-level behavior explicit.
 4. What time-window size and category-compatibility rules define duplicate candidates? These must be measured and versioned.
-5. The initial NLP targets are disruption relevance and operational severity only. Which classifier artifact and thresholds should be used for production, and how should severity be persisted and exposed by `app_api`? Incident-category classification is deferred and is not required for the initial baseline.
+5. The initial NLP targets are disruption relevance and operational severity only. Which classifier artifact and thresholds should be used for production? Severity is stored separately from category and may be exposed as nullable by `app_api`; current artifact/thresholds remain development configuration until a production evaluation decision. Incident-category classification is deferred and is not required for the initial baseline.
 6. Which query embedding runtime is selected (`fastembed` or ONNX Runtime), and how are compatible model artifacts deployed on each host?
 7. Is optional Ollama rewriting enabled in production, and what is its timeout/fallback policy? The default should remain deterministic templates until explicitly approved.
-8. What authentication mechanism protects FastAPI through NGROK and the production gateway? NGROK alone is not authorization.
+8. What user authentication mechanism protects FastAPI through NGROK and the production gateway? NGROK alone is not authorization. Any static shared bearer token is limited to private development smoke tests and must not be embedded in a distributable iOS app.
 9. What retention/deletion policy applies to source text, quotes, processing versions, embeddings, and logs?
-10. What user-visible wording and localization are required for stale results, unresolved stations, no matching results, and source unavailability?
+10. Indonesian is the initial UI language. Product review may refine localized wording for stale results, unresolved stations, no matching results, and source unavailability.
 11. What numeric baseline thresholds are required for recall, precision, exact-quote validation, and format failure rate before publication?
 13. What production rollout topology and approval process will be used for `nlp` and `app_api`? The implementation target is already decided: the existing Supabase development database containing `collection`, separate from live. Development migrations must not be applied to live, and must not change existing `collection` objects, data, roles, grants, or ownership.
 
@@ -560,8 +575,11 @@ The exact names may change with the app contract, but responses should encode av
 {
   "availability": "results",
   "generated_at": "database-derived timestamp",
+  "window_hours": 24,
+  "message": "localized availability message",
   "items": [
     {
+      "public_event_id": "stable public event UUID",
       "title": "Structured title",
       "summary": "Curated conclusion composed from structured fields",
       "station_or_segment": {
@@ -571,18 +589,20 @@ The exact names may change with the app contract, but responses should encode av
         "end_station": "End station",
         "direction": "Configured direction value"
       },
-      "category": "Configured incident category",
-      "severity": "light | moderate | severe, when supported and approved for exposure",
+      "severity": "light | moderate | severe | null",
       "event_time": "Parsed or source-supported time",
-      "freshness": "fresh",
-      "certainty": "Configured certainty value",
+      "certainty": "low | medium | high | unknown | null",
+      "freshness": "fresh | stale",
       "source": {
         "display_name": "Approved publisher/source name",
         "url": "Approved source URL",
         "published_at": "Source publication timestamp"
       }
     }
-  ]
+  ],
+  "limit": 20,
+  "offset": 0,
+  "next_offset": null
 }
 ```
 

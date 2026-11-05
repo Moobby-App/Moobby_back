@@ -7,8 +7,11 @@ name = "mooby-back"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "fastapi==0.146.0",
+    "pydantic==2.14.3",
     "psycopg[binary]>=3,<4",
     "scikit-learn==1.9.1",
+    "uvicorn[standard]==0.54.0",
 ]
 
 [tool.setuptools.packages.find]

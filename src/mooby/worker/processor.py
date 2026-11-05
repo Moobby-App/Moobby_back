@@ -423,6 +423,7 @@ def _build_draft_event(
     station_catalog: Sequence[StationReference] | None,
     event_time: Any,
     quote: Any,
+    severity_label: str,
 ) -> tuple[DraftEvent | None, str | None]:
     if not pipeline_version or not pipeline_version.strip():
         return None, "pipeline_version_unavailable"
@@ -430,6 +431,8 @@ def _build_draft_event(
         return None, "location_unresolved"
     if quote.status != "validated" or not quote.quote:
         return None, "evidence_quote_unresolved"
+    if severity_label not in {"light", "moderate", "severe"}:
+        return None, "severity_unresolved"
     if station_catalog is None:
         return None, "station_catalog_unavailable"
     if (
@@ -517,6 +520,7 @@ def _build_draft_event(
         ),
         event_time_method=event_time.method,
         event_time_certainty=event_time.certainty,
+        severity=severity_label,
         title=title,
         summary=summary,
         source_platform=snapshot.platform,
@@ -789,13 +793,14 @@ def process_snapshot(
         station_catalog=station_catalog,
         event_time=event_time,
         quote=quote_candidate,
+        severity_label=severity.label,
     )
     metadata["event_draft_persistence"] = {
         "status": "ready_for_atomic_insert" if draft_event is not None else "not_created",
         "event_id": str(draft_event.event_id) if draft_event is not None else None,
         "reason": draft_blocker,
         "category": None,
-        "severity_storage": "processing_run_metadata_only",
+        "severity_storage": "event_version_column",
         "verification_status": "unverified" if draft_event is not None else None,
         "publication_status": "not_eligible" if draft_event is not None else None,
     }

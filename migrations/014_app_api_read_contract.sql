@@ -1,0 +1,198 @@
+-- Development only. Creates a read-only, app-safe event projection.
+-- Does not modify collection, reference data, or existing reference grants.
+
+BEGIN;
+
+CREATE ROLE mooby_app_api_owner_dev
+    NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE mooby_app_api_gateway_dev
+    NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE mooby_app_api_login_dev
+    LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+
+GRANT mooby_app_api_gateway_dev TO mooby_app_api_login_dev
+    WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
+
+ALTER TABLE nlp.event_versions
+    ADD COLUMN severity text
+        CHECK (severity IS NULL OR severity IN ('light', 'moderate', 'severe'));
+
+COMMENT ON COLUMN nlp.event_versions.severity IS
+    'Operational severity; nullable when unsupported. Separate from incident category.';
+
+GRANT INSERT (severity)
+ON TABLE nlp.event_versions TO mooby_nlp_worker_dev;
+
+GRANT moobby_incident_readonly TO mooby_app_api_owner_dev
+    WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
+GRANT USAGE ON SCHEMA nlp TO mooby_app_api_owner_dev;
+GRANT SELECT (
+    event_id, event_version, source_snapshot_id, event_kind,
+    line_id, station_id, start_station_id, end_station_id, direction,
+    path_id, path_version, event_at, event_time_certainty,
+    freshness_anchor_at, first_seen_at, certainty_label,
+    verification_status, publication_status, severity, title, summary
+)
+ON TABLE nlp.event_versions TO mooby_app_api_owner_dev;
+GRANT SELECT (
+    event_id, event_version, source_snapshot_id, source_platform,
+    canonical_url, source_published_at
+)
+ON TABLE nlp.event_sources TO mooby_app_api_owner_dev;
+GRANT SELECT (line_id, canonical_name)
+ON TABLE nlp.transit_lines TO mooby_app_api_owner_dev;
+GRANT SELECT (
+    path_id, path_version, line_id, review_status, effective_since, effective_until
+)
+ON TABLE nlp.line_paths TO mooby_app_api_owner_dev;
+GRANT SELECT (
+    path_id, path_version, direction, seq, station_id,
+    effective_since, effective_until
+)
+ON TABLE nlp.line_path_stations TO mooby_app_api_owner_dev;
+
+CREATE SCHEMA app_api AUTHORIZATION mooby_app_api_owner_dev;
+REVOKE ALL ON SCHEMA app_api FROM PUBLIC;
+
+SET LOCAL ROLE mooby_app_api_owner_dev;
+
+CREATE VIEW app_api.published_disruptions
+WITH (security_barrier = true)
+AS
+WITH latest_versions AS (
+    SELECT DISTINCT ON (ev.event_id)
+        ev.event_id,
+        ev.event_version,
+        ev.source_snapshot_id,
+        ev.event_kind,
+        ev.line_id,
+        ev.station_id,
+        ev.start_station_id,
+        ev.end_station_id,
+        ev.direction,
+        ev.path_id,
+        ev.path_version,
+        ev.event_at,
+        ev.event_time_certainty,
+        ev.freshness_anchor_at,
+        ev.first_seen_at,
+        ev.certainty_label,
+        ev.verification_status,
+        ev.publication_status,
+        ev.severity,
+        ev.title,
+        ev.summary
+    FROM nlp.event_versions AS ev
+    ORDER BY ev.event_id, ev.event_version DESC
+), eligible AS (
+    SELECT *
+    FROM latest_versions
+    WHERE verification_status = 'verified'
+      AND publication_status = 'published'
+)
+SELECT
+    ev.event_id AS public_event_id,
+    ev.event_kind,
+    ev.title,
+    ev.summary,
+    ev.severity,
+    ev.event_at,
+    ev.event_time_certainty,
+    ev.certainty_label,
+    COALESCE(ev.event_at, ev.freshness_anchor_at, ev.first_seen_at)
+        AS freshness_anchor_at,
+    line.canonical_name AS line_name,
+    ev.station_id,
+    station.canonical_name AS station_name,
+    ev.start_station_id,
+    start_station.canonical_name AS start_station_name,
+    ev.end_station_id,
+    end_station.canonical_name AS end_station_name,
+    ev.direction,
+    CASE
+        WHEN ev.event_kind = 'station' THEN ARRAY[ev.station_id]
+        WHEN path_range.station_ids IS NOT NULL THEN path_range.station_ids
+        ELSE ARRAY[ev.start_station_id, ev.end_station_id]
+    END AS affected_station_ids,
+    CASE src.source_platform
+        WHEN 'x' THEN 'X'
+        WHEN 'threads' THEN 'Threads'
+        WHEN 'rss' THEN 'RSS'
+        WHEN 'web' THEN 'Web'
+        ELSE 'Source'
+    END AS source_display_name,
+    src.canonical_url AS source_url,
+    src.source_published_at
+FROM eligible AS ev
+JOIN LATERAL (
+    SELECT s.source_platform, s.canonical_url, s.source_published_at
+    FROM nlp.event_sources AS s
+    WHERE s.event_id = ev.event_id
+      AND s.event_version = ev.event_version
+      AND s.source_snapshot_id = ev.source_snapshot_id
+    ORDER BY s.source_published_at DESC NULLS LAST
+    LIMIT 1
+) AS src ON true
+LEFT JOIN nlp.transit_lines AS line
+    ON line.line_id = ev.line_id
+LEFT JOIN nlp.line_paths AS path
+    ON path.path_id = ev.path_id
+   AND path.path_version = ev.path_version
+   AND path.line_id = ev.line_id
+LEFT JOIN reference.krl_stations AS station
+    ON station.station_id = ev.station_id
+LEFT JOIN reference.krl_stations AS start_station
+    ON start_station.station_id = ev.start_station_id
+LEFT JOIN reference.krl_stations AS end_station
+    ON end_station.station_id = ev.end_station_id
+LEFT JOIN LATERAL (
+    WITH active_stations AS MATERIALIZED (
+        SELECT pst.station_id, pst.seq
+        FROM nlp.line_path_stations AS pst
+        WHERE ev.event_kind = 'segment'
+          AND ev.path_id IS NOT NULL
+          AND pst.path_id = ev.path_id
+          AND pst.path_version = ev.path_version
+          AND pst.direction = ev.direction
+          AND (pst.effective_since IS NULL OR pst.effective_since <=
+                COALESCE(ev.event_at, src.source_published_at, ev.first_seen_at)::date)
+          AND (pst.effective_until IS NULL OR pst.effective_until >=
+                COALESCE(ev.event_at, src.source_published_at, ev.first_seen_at)::date)
+    ), endpoint_bounds AS (
+        SELECT
+            MIN(seq) FILTER (WHERE station_id = ev.start_station_id) AS start_seq,
+            MIN(seq) FILTER (WHERE station_id = ev.end_station_id) AS end_seq
+        FROM active_stations
+    )
+    SELECT array_agg(active.station_id ORDER BY active.seq) AS station_ids
+    FROM active_stations AS active
+    CROSS JOIN endpoint_bounds AS bounds
+    WHERE active.seq BETWEEN LEAST(bounds.start_seq, bounds.end_seq)
+                          AND GREATEST(bounds.start_seq, bounds.end_seq)
+) AS path_range ON true
+WHERE COALESCE(ev.event_at, ev.freshness_anchor_at, ev.first_seen_at)
+        >= statement_timestamp() - interval '24 hours'
+  AND COALESCE(ev.event_at, ev.freshness_anchor_at, ev.first_seen_at)
+        <= statement_timestamp()
+  AND (
+      ev.event_kind = 'station'
+      OR (
+          ev.path_id IS NOT NULL
+          AND path.review_status = 'confirmed'
+          AND (path.effective_since IS NULL OR path.effective_since <=
+                COALESCE(ev.event_at, src.source_published_at, ev.first_seen_at)::date)
+          AND (path.effective_until IS NULL OR path.effective_until >=
+                COALESCE(ev.event_at, src.source_published_at, ev.first_seen_at)::date)
+      )
+  );
+
+COMMENT ON VIEW app_api.published_disruptions IS
+    'Latest verified and published event versions within the database-clock 24-hour window; app-safe projection only.';
+
+RESET ROLE;
+
+GRANT USAGE ON SCHEMA app_api TO mooby_app_api_gateway_dev;
+GRANT SELECT ON app_api.published_disruptions TO mooby_app_api_gateway_dev;
+REVOKE ALL ON app_api.published_disruptions FROM PUBLIC;
+
+COMMIT;
