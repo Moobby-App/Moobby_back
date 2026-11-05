@@ -92,6 +92,29 @@ Laporan hitungan disimpan di `evaluation/private/Scrape_Manual/synthetic_batch_r
 
 Untuk membuat contoh kartu UI, gunakan fixture/mock terpisah yang secara jelas diberi label **SIMULASI**. Jangan mengubah synthetic training text menjadi sumber collection atau mempublikasikannya sebagai laporan gangguan nyata.
 
+### Tampilkan fixture sintetis di app untuk uji singkat
+
+Mode berikut mengalihkan endpoint feed Development ke hasil pemrosesan sintetis
+di memori. Item diberi awalan `SIMULASI` dan sumber `SIMULASI · dataset
+sintetis`; tidak ada perubahan database. Mode wajib diaktifkan dengan dua
+penanda Development dan berhenti otomatis setelah TTL saat proses API dimulai.
+TTL dibatasi 1–240 menit. Jika TTL atau konfigurasi salah, feed simulasi gagal
+tertutup.
+
+Sebelum menjalankan API, tambahkan/ubah nilai lokal di `.env`:
+
+```dotenv
+APP_API_ENVIRONMENT=development
+APP_API_SYNTHETIC_FIXTURE_MODE=development
+APP_API_SYNTHETIC_FIXTURE_TTL_MINUTES=60
+```
+
+Restart API setelah mengubah konfigurasi. URL ngrok yang sudah berjalan tetap
+meneruskan ke API lokal pada port 8000. Setelah uji selesai atau TTL habis,
+hentikan dan jalankan ulang API dengan `APP_API_SYNTHETIC_FIXTURE_MODE=disabled`.
+Mode ini hanya untuk pemeriksaan visual Development; hasilnya bukan event
+terverifikasi dan tidak boleh dipakai untuk menilai feed produksi.
+
 ## Kontrak dan batas saat ini
 
 - App memanggil FastAPI melalui gateway; app tidak memakai koneksi PostgreSQL.

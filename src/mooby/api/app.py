@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hmac
 import logging
+import os
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -26,15 +28,38 @@ from mooby.api.repository import (
     check_database,
     fetch_disruptions,
 )
+from mooby.api.synthetic_fixtures import (
+    SyntheticFixtureUnavailable,
+    synthetic_fixture_page,
+)
 
 
 logger = logging.getLogger(__name__)
 _bearer = HTTPBearer(auto_error=False)
 _STATION_ID = re.compile(r"^open-krl:[A-Z0-9]+$")
+_PROCESS_STARTED_AT = datetime.now(timezone.utc)
 
 
 class ApiUnavailable(Exception):
     pass
+
+
+def _synthetic_fixture_mode_enabled() -> bool:
+    mode = os.environ.get("APP_API_SYNTHETIC_FIXTURE_MODE", "disabled").strip().casefold()
+    environment = os.environ.get("APP_API_ENVIRONMENT", "").strip().casefold()
+    if mode == "disabled":
+        return False
+    if mode == "development" and environment == "development":
+        try:
+            ttl_minutes = int(os.environ.get("APP_API_SYNTHETIC_FIXTURE_TTL_MINUTES", ""))
+        except ValueError as exc:
+            raise ApiUnavailable from exc
+        if not 1 <= ttl_minutes <= 240:
+            raise ApiUnavailable
+        return datetime.now(timezone.utc) < (
+            _PROCESS_STARTED_AT + timedelta(minutes=ttl_minutes)
+        )
+    raise ApiUnavailable
 
 
 def _settings_or_503() -> ApiSettings:
@@ -169,6 +194,41 @@ def create_app() -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"code": "invalid_station_id"},
+            )
+        try:
+            if _synthetic_fixture_mode_enabled():
+                page = synthetic_fixture_page(
+                    station_ids=station_ids,
+                    limit=limit,
+                    offset=offset,
+                )
+                items = [record.item for record in page.items[:limit]]
+                has_more = len(page.items) > limit
+                return DisruptionFeed(
+                    availability="results" if items else "no_match",
+                    generated_at=page.generated_at,
+                    message=(
+                        "SIMULASI: contoh sintetis, bukan laporan gangguan nyata."
+                        if items
+                        else "SIMULASI: tidak ada contoh yang cocok untuk rute ini."
+                    ),
+                    items=items,
+                    limit=limit,
+                    offset=offset,
+                    next_offset=offset + limit if has_more else None,
+                )
+        except (ApiUnavailable, SyntheticFixtureUnavailable) as exc:
+            logger.warning("synthetic app_api feed unavailable (%s)", type(exc).__name__)
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content=DisruptionFeed(
+                    availability="source_unavailable",
+                    generated_at=None,
+                    message="Fixture simulasi tidak tersedia. Coba lagi.",
+                    items=[],
+                    limit=limit,
+                    offset=offset,
+                ).model_dump(mode="json"),
             )
         try:
             page = fetch_disruptions(

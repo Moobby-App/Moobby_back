@@ -60,6 +60,8 @@ The API login should use `mooby_app_api_login_dev`, whose only application data 
 
 The event version remains invisible until automated event verification and publication set the current version to `verified` and `published`. Current worker drafts use `unverified` and `not_eligible`, so they will not appear in the feed.
 
+For a short, explicitly enabled local UI smoke test, the server also supports a Development-only synthetic fixture mode. It runs the CSV text through the processor in memory and marks each returned title/source as `SIMULASI`; it does not write to PostgreSQL. Enable it only with `APP_API_ENVIRONMENT=development`, `APP_API_SYNTHETIC_FIXTURE_MODE=development`, and a 1–240 minute `APP_API_SYNTHETIC_FIXTURE_TTL_MINUTES`. The mode ends automatically after that process TTL. It is not part of the normal published-event feed.
+
 ## Local configuration and launch
 
 Set these server-side values in the ignored local `.env` or a secret manager:
