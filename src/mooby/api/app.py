@@ -98,14 +98,19 @@ def _item(row: dict[str, object]) -> DisruptionItem:
         StationOrSegment(
             kind="station",
             station=row["station_name"],
+            station_id=row["station_id"],
+            affected_station_ids=row["affected_station_ids"],
         )
         if event_kind == "station"
         else StationOrSegment(
             kind="segment",
             line=row["line_name"],
             start_station=row["start_station_name"],
+            start_station_id=row["start_station_id"],
             end_station=row["end_station_name"],
+            end_station_id=row["end_station_id"],
             direction=row["direction"],
+            affected_station_ids=row["affected_station_ids"],
         )
     )
     return DisruptionItem(

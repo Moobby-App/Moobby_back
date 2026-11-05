@@ -21,9 +21,13 @@ class StationOrSegment(BaseModel):
     kind: Literal["station", "segment"]
     line: str | None = None
     station: str | None = None
+    station_id: str | None = None
     start_station: str | None = None
+    start_station_id: str | None = None
     end_station: str | None = None
+    end_station_id: str | None = None
     direction: str | None = None
+    affected_station_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_location_shape(self) -> "StationOrSegment":

@@ -28,9 +28,13 @@ Example response shape (synthetic values):
         "kind": "station",
         "line": null,
         "station": "Stasiun Contoh",
+        "station_id": "open-krl:CONTOH",
         "start_station": null,
+        "start_station_id": null,
         "end_station": null,
-        "direction": null
+        "end_station_id": null,
+        "direction": null,
+        "affected_station_ids": ["open-krl:CONTOH"]
       },
       "severity": null,
       "event_time": null,
@@ -50,11 +54,11 @@ Example response shape (synthetic values):
 }
 ```
 
-`no_match` is a successful response with an empty `items` array. `source_unavailable` is returned with HTTP 503 when the API configuration or database dependency cannot provide a reliable result. Authentication errors remain HTTP 401. The response intentionally omits incident category until the taxonomy is defined.
+`no_match` is a successful response with an empty `items` array. `source_unavailable` is returned with HTTP 503 when the API configuration or database dependency cannot provide a reliable result. Authentication errors remain HTTP 401. Location IDs come from the canonical station reference and the view's confirmed-path expansion; the app can use `affected_station_ids` to place events on its selected-route timeline without matching names. The response does not expose `path_id`; it intentionally omits incident category until the taxonomy is defined.
 
 ## Eligibility and data boundary
 
-Migration `014_app_api_read_contract.sql` adds nullable, constrained `event_versions.severity` and creates a latest-version projection. The view returns only the latest event version when it is `verified` and `published`, and only while the database-clock freshness anchor is within the preceding 24 hours. Freshness is `fresh` through 8 hours and `stale` after 8 through 24 hours. It projects only curated event fields, canonical location names, platform-level source display name, HTTPS source URL, and source publication time. It excludes source text, exact quotes, author data, source snapshot IDs, model output, internal notes, and queue data.
+Migration `014_app_api_read_contract.sql` adds nullable, constrained `event_versions.severity` and creates a latest-version projection. The view returns only the latest event version when it is `verified` and `published`, and only while the database-clock freshness anchor is within the preceding 24 hours. Freshness is `fresh` through 8 hours and `stale` after 8 through 24 hours. It projects curated event fields, canonical location names and IDs, confirmed-path affected station IDs, platform-level source display name, HTTPS source URL, and source publication time. It excludes source text, exact quotes, author data, source snapshot IDs, model output, internal notes, path IDs, and queue data.
 
 The API login should use `mooby_app_api_login_dev`, whose only application data access is through `mooby_app_api_gateway_dev` and the single view. Set that login password out of band in Development and store its URL in the server-only `APP_API_DATABASE_URL`. Never reuse the worker or migration URL. The role setup assumes the existing `moobby_incident_readonly` role; stop if that prerequisite is absent. Migration 014 has not been applied by this code change.
 

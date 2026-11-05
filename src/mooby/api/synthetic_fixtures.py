@@ -103,7 +103,12 @@ def _item_from_draft(
         station = stations_by_id.get(draft.station_id or "")
         if station is None:
             raise ValueError("synthetic station reference missing")
-        location = StationOrSegment(kind="station", station=station.canonical_name)
+        location = StationOrSegment(
+            kind="station",
+            station=station.canonical_name,
+            station_id=station.station_id,
+            affected_station_ids=[station.station_id],
+        )
         station_ids = (station.station_id,)
     else:
         start = stations_by_id.get(draft.start_station_id or "")
@@ -114,8 +119,11 @@ def _item_from_draft(
             kind="segment",
             line=draft.line_id,
             start_station=start.canonical_name,
+            start_station_id=start.station_id,
             end_station=end.canonical_name,
+            end_station_id=end.station_id,
             direction=draft.direction,
+            affected_station_ids=[start.station_id, end.station_id],
         )
         station_ids = (start.station_id, end.station_id)
     return SyntheticFixtureRecord(

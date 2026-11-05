@@ -34,9 +34,13 @@ SELECT
     END AS freshness,
     v.line_name,
     v.station_name,
+    v.station_id,
     v.start_station_name,
+    v.start_station_id,
     v.end_station_name,
+    v.end_station_id,
     v.direction,
+    v.affected_station_ids,
     v.source_display_name,
     v.source_url,
     v.source_published_at
