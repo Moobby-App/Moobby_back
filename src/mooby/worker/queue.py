@@ -41,6 +41,64 @@ RETURNING
     q.lease_owner;
 """
 
+ENQUEUE_RECENT_SNAPSHOTS_SQL = """
+WITH database_time AS (
+    SELECT clock_timestamp() AS now_at
+), candidates AS (
+    SELECT s.id AS source_snapshot_id
+    FROM collection.raw_snapshots AS s
+    CROSS JOIN database_time AS t
+    WHERE s.captured_at >= t.now_at - (%s * interval '1 second')
+      AND s.captured_at <= t.now_at
+      AND (%s::uuid IS NULL OR s.id = %s::uuid)
+      AND NOT EXISTS (
+          SELECT 1
+          FROM nlp.processing_queue AS q
+          WHERE q.source_snapshot_id = s.id
+            AND q.pipeline_version = %s
+      )
+    ORDER BY s.captured_at DESC, s.id DESC
+    LIMIT %s
+)
+INSERT INTO nlp.processing_queue (source_snapshot_id, pipeline_version)
+SELECT source_snapshot_id, %s
+FROM candidates
+ON CONFLICT (source_snapshot_id, pipeline_version) DO NOTHING
+RETURNING source_snapshot_id;
+"""
+
+
+def enqueue_recent_snapshots(
+    conn: Connection[Any],
+    *,
+    pipeline_version: str,
+    lookback_seconds: int = 3600,
+    batch_size: int = 5,
+    snapshot_id: str | None = None,
+) -> list[str]:
+    """Queue recent captured snapshots without waiting for a full batch."""
+    if not pipeline_version.strip():
+        raise ValueError("pipeline_version must not be empty")
+    if lookback_seconds < 1 or batch_size < 1 or batch_size > 100:
+        raise ValueError("lookback_seconds or batch_size is outside the allowed range")
+
+    with conn.transaction():
+        rows = conn.execute(
+            ENQUEUE_RECENT_SNAPSHOTS_SQL,
+            (
+                lookback_seconds,
+                snapshot_id,
+                snapshot_id,
+                pipeline_version,
+                batch_size,
+                pipeline_version,
+            ),
+        ).fetchall()
+    return [
+        str(row["source_snapshot_id"] if isinstance(row, Mapping) else row[0])
+        for row in rows
+    ]
+
 
 def claim_batch(
     conn: Connection[Any],

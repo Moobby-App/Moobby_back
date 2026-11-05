@@ -44,10 +44,10 @@ ResultStatus = Literal[
 ]
 
 KEYWORD_RULES_VERSION = "krl-keyword-prefilter-v1"
-LOCATION_RULES_VERSION = "ordered-confirmed-path-mentions-v1"
-DRAFT_EVENT_RULES_VERSION = "single-station-or-confirmed-segment-draft-v1"
+LOCATION_RULES_VERSION = "explicit-lintas-pair-confirmed-path-v2"
+DRAFT_EVENT_RULES_VERSION = "single-station-or-explicit-confirmed-segment-draft-v2"
 NORMALIZATION_VERSION = "nfkc-casefold-whitespace-v1"
-PROCESSOR_CODE_VERSION = "classification-worker-slice-v5"
+PROCESSOR_CODE_VERSION = "classification-worker-slice-v6"
 INTAKE_WINDOW = timedelta(hours=1)
 KEYWORDS = (
     "gangguan",
@@ -289,6 +289,50 @@ def _ordered_station_ids_in_text(
     return tuple(ordered)
 
 
+def _explicit_lintas_station_pair(
+    normalized_text: str,
+    station_catalog: Sequence[StationReference],
+) -> tuple[str, str] | Literal["ambiguous"] | None:
+    """Extract only a station pair explicitly attached to the word 'lintas'."""
+    alias_station_ids: dict[str, set[str]] = {}
+    for station in station_catalog:
+        for name in (station.canonical_name, *station.aliases):
+            alias = normalize_text(name)
+            if alias:
+                alias_station_ids.setdefault(alias, set()).add(station.station_id)
+
+    if not alias_station_ids:
+        return None
+
+    alternatives = "|".join(
+        re.escape(alias)
+        for alias in sorted(alias_station_ids, key=lambda value: (-len(value), value))
+    )
+    pair_pattern = re.compile(
+        rf"(?<!\w)lintas\s+(?P<first>{alternatives})\s*"
+        rf"(?:[-–—]\s*|\b(?:sampai|hingga)\b\s*)"
+        rf"(?P<second>{alternatives})(?!\w)"
+    )
+
+    pairs: set[tuple[str, str]] = set()
+    for match in pair_pattern.finditer(normalized_text):
+        first_ids = alias_station_ids[match.group("first")]
+        second_ids = alias_station_ids[match.group("second")]
+        if len(first_ids) != 1 or len(second_ids) != 1:
+            return "ambiguous"
+        first_id = next(iter(first_ids))
+        second_id = next(iter(second_ids))
+        if first_id == second_id:
+            return "ambiguous"
+        pairs.add((first_id, second_id))
+
+    if not pairs:
+        return None
+    if len(pairs) != 1:
+        return "ambiguous"
+    return next(iter(pairs))
+
+
 def _resolve_structured_location(
     normalized_text: str,
     station_resolution: StationResolution,
@@ -297,6 +341,41 @@ def _resolve_structured_location(
 ) -> StructuredLocation:
     if station_resolution.status != "resolved" or station_catalog is None:
         return StructuredLocation("unresolved", station_resolution.station_ids)
+
+    explicit_pair = _explicit_lintas_station_pair(normalized_text, station_catalog)
+    if explicit_pair == "ambiguous":
+        return StructuredLocation("ambiguous", station_resolution.station_ids)
+    if explicit_pair is not None:
+        pair_ids = explicit_pair
+        if path_catalog is None:
+            return StructuredLocation("unresolved", pair_ids)
+
+        matching_pair_paths: list[OrderedPathReference] = []
+        for path in path_catalog:
+            try:
+                first_index = path.station_ids.index(pair_ids[0])
+                second_index = path.station_ids.index(pair_ids[1], first_index + 1)
+            except ValueError:
+                continue
+            matching_pair_paths.append(path)
+
+        if len(matching_pair_paths) != 1:
+            status: Literal["unresolved", "ambiguous"] = (
+                "ambiguous" if matching_pair_paths else "unresolved"
+            )
+            return StructuredLocation(status, pair_ids)
+
+        path = matching_pair_paths[0]
+        return StructuredLocation(
+            status="segment_resolved",
+            station_ids=pair_ids,
+            line_id=path.line_id,
+            path_id=path.path_id,
+            path_version=path.path_version,
+            direction=path.direction,
+            start_station_id=pair_ids[0],
+            end_station_id=pair_ids[1],
+        )
 
     ordered_ids = _ordered_station_ids_in_text(normalized_text, station_catalog)
     if ordered_ids is None or set(ordered_ids) != set(station_resolution.station_ids):
@@ -948,3 +1027,33 @@ def run_once(
         ),
     )
     return RunOnceResult(claimed=True, outcome=outcome, run_id=run_id)
+
+
+def run_available(
+    conn: Connection[Any],
+    *,
+    pipeline_version: str,
+    worker_id: str,
+    max_attempts: int,
+    lease_seconds: int,
+    transient_retry_after_seconds: int,
+    max_items: int = 1,
+) -> list[RunOnceResult]:
+    """Process currently queued items up to a cap; never wait to fill the cap."""
+    if max_items < 1 or max_items > 5:
+        raise ValueError("max_items must be between 1 and 5")
+
+    results: list[RunOnceResult] = []
+    for _ in range(max_items):
+        result = run_once(
+            conn,
+            pipeline_version=pipeline_version,
+            worker_id=worker_id,
+            max_attempts=max_attempts,
+            lease_seconds=lease_seconds,
+            transient_retry_after_seconds=transient_retry_after_seconds,
+        )
+        if not result.claimed:
+            break
+        results.append(result)
+    return results

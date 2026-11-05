@@ -43,8 +43,12 @@ The system must distinguish a real lack of matching reports from unavailable sou
 Collector
   └─ writes private source snapshots → collection
 
+Queue Dispatcher (inside the worker service; least-privilege queue writer)
+  └─ polls recent committed snapshot IDs read-only and enqueues them → nlp.processing_queue without a count watermark
+
 Scheduled Worker (Python 3.12)
-  ├─ claims up to 5 snapshot jobs with FOR UPDATE SKIP LOCKED
+  ├─ claims currently available queue jobs with FOR UPDATE SKIP LOCKED, up to a configured maximum
+  ├─ never waits for a batch to fill; a single queued snapshot is eligible immediately
   ├─ gates by trusted publication time (last 1 hour, database clock)
   ├─ preserves raw text; derives normalized processing text
   ├─ applies the versioned keyword prefilter and records skips
@@ -476,7 +480,7 @@ Tests must run without real production credentials or mutation of production dat
 Configuration should be explicit, versioned, and validated at startup. It should include:
 
 - Database connection settings per component/role, secret references, connect/read timeouts, and pool limits.
-- Queue batch size (initially 5), lease duration, retry limits, scheduler interval, and worker concurrency.
+- Queue claim maximum (up to 5; initially 1 for Development), lease duration, retry limits, dispatcher/worker polling interval, and worker concurrency. The maximum is not a minimum batch size or a wait-for-five watermark.
 - Versioned keyword-prefilter terms/rules; active relevance/severity classifier artifact/version/digest and separate thresholds for each output.
 - Station-reference and event embedding index versions, model name/version/digest, vector dimension, and query runtime (`fastembed` or ONNX Runtime).
 - Station alias/reference-data version, vector-candidate threshold followed by deterministic station validation, route/path variant data version, GTFS source feed digest/effective date, crosswalk version, and direction conventions.
@@ -491,6 +495,7 @@ Secrets and environment-specific URLs must not be stored in the repository. Chan
 ## 19. Recommended implementation sequence
 
 1. Use the existing Supabase development database that contains `collection`; confirm its project identity and separation from live. Inspect and document the source schema and stable snapshot/post ID. New migrations target development only and must not change any `collection` objects, data, roles, grants, ownership, or Collector behavior.
+   - Implement the queue dispatcher inside the worker service: poll recent committed snapshot IDs read-only and enqueue them promptly without waiting for a group of five. It may read only the approved source snapshot fields needed for discovery and write only corresponding `nlp.processing_queue` rows. Define its least-privilege identity and queue insert grant in a reviewed migration; do not add a trigger or change `collection`/Collector behavior by implication. Until this dispatcher and its access are installed, newly collected snapshots are not automatically queued.
 2. Reconcile the audited stop crosswalk, curate aliases, and review candidate path variants and ordered station sequences for the five-line scope; add data-quality checks. Keep `MERAK` out of scope and `SG` catalog-only unless a later scope decision changes that.
 3. Add ordered SQL migrations for `nlp`, roles, queue, event-version structures, evidence, embeddings, skip/error records, and indexes.
    - Vector storage and pgvector search are required by this Spec but are deferred from migrations 001–003. A future ordered migration must add event-version embedding storage with model/version provenance, pgvector support, and vector dimension/index configuration aligned to the pinned model artifact. It must support filtered semantic retrieval and embedding-based duplicate candidate generation; finalize the artifact dimension and index configuration before designing that migration.
@@ -516,7 +521,7 @@ The implementation is acceptable when all of the following are demonstrated:
 - A snapshot can be retried safely; outputs are versioned and old versions remain auditable.
 - Each event version records model version and digest; every keyword/time-filtered or otherwise skipped post has a reason.
 - Live worker intake uses a one-hour `published_at` window from the database clock, then the configured keyword filter before any embedding or vector search. The initial keyword list is recorded and versioned.
-- The worker processes up to five jobs per claim batch. Station-reference vector results are textual candidates for extracted station-name spans and are validated against canonical names/approved aliases; station coordinates are reserved for GPS nearest-station lookup and are not vector inputs. Neither vector similarity nor coordinates classify truth. Full post embeddings are generated only after relevance classification for eligible disruptions.
+- The worker claims up to the configured maximum (capped at five) from jobs already present in `nlp.processing_queue`, and processes fewer when fewer are available; it never waits for a full batch. Newly committed `collection` snapshots are processed promptly only after the separately reviewed queue dispatcher enqueues them. Station-reference vector results are textual candidates for extracted station-name spans and are validated against canonical names/approved aliases; station coordinates are reserved for GPS nearest-station lookup and are not vector inputs. Neither vector similarity nor coordinates classify truth. Full post embeddings are generated only after relevance classification for eligible disruptions.
 - GPS-to-station resolution uses the reference latitude/longitude with geospatial distance calculation and configured maximum-distance/ambiguity handling; station mentions in posts use text/name resolution. These two location-resolution paths must remain distinct.
 - Malformed output and valid policy rejection are separately represented and measured.
 - Duplicate candidates are constrained by station, time window, and compatible category; embedding similarity alone cannot merge or verify events.
