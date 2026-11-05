@@ -22,6 +22,11 @@ from mooby.db.source_reader import (
     load_station_catalog,
 )
 from mooby.worker.classifier import ClassifierAdapter, ModelArtifactError, ModelPrediction
+from mooby.worker.event_fields import (
+    EVENT_TIME_RULES_VERSION,
+    EVENT_TIMEZONE,
+    extract_event_time_candidate,
+)
 from mooby.worker.queue import claim_batch, finish_attempt
 
 ResultStatus = Literal[
@@ -34,7 +39,7 @@ ResultStatus = Literal[
 
 KEYWORD_RULES_VERSION = "krl-keyword-prefilter-v1"
 NORMALIZATION_VERSION = "nfkc-casefold-whitespace-v1"
-PROCESSOR_CODE_VERSION = "classification-worker-slice-v1"
+PROCESSOR_CODE_VERSION = "classification-worker-slice-v3"
 INTAKE_WINDOW = timedelta(hours=1)
 KEYWORDS = (
     "gangguan",
@@ -334,7 +339,7 @@ def process_snapshot(
         "station_ids": list(station_resolution.station_ids),
         "vector_lookup": "unavailable_no_index_provider",
     }
-    if station_resolution.status == "ambiguous":
+    if station_resolution.status in {"ambiguous", "no_match"}:
         return _reason(
             "skipped",
             "station_unresolved",
@@ -416,6 +421,15 @@ def process_snapshot(
     metadata["accepted_labels"] = {
         "relevance": relevance.label,
         "severity": severity.label,
+    }
+    event_time = extract_event_time_candidate(snapshot.raw_text, published_at)
+    metadata["event_time_candidate"] = {
+        "status": event_time.status,
+        "event_at": event_time.event_at.isoformat() if event_time.event_at else None,
+        "method": event_time.method,
+        "certainty": event_time.certainty,
+        "timezone": EVENT_TIMEZONE.key,
+        "rules_version": EVENT_TIME_RULES_VERSION,
     }
     return ProcessingOutcome("succeeded", result_metadata=metadata)
 
