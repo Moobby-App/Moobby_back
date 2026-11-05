@@ -40,6 +40,14 @@ WHERE s.id = %s
 """
 
 
+def database_clock_now(conn: Connection) -> datetime:
+    """Return PostgreSQL's clock for eligibility decisions."""
+    row = conn.execute("SELECT clock_timestamp()").fetchone()
+    if row is None or not isinstance(row[0], datetime):
+        raise RuntimeError("Database clock returned an invalid timestamp")
+    return row[0]
+
+
 def load_snapshot(
     conn: Connection,
     snapshot_id: UUID,
