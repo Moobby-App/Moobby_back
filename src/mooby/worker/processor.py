@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 import hashlib
 import math
@@ -9,23 +9,29 @@ import os
 import re
 import unicodedata
 from typing import Any, Callable, Literal, Mapping, Sequence
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from psycopg import Connection
 
 from mooby.db.source_reader import (
     SourceSnapshot,
+    OrderedPathReference,
     StationCatalogUnavailable,
     StationReference,
     database_clock_now,
     load_snapshot,
+    load_confirmed_ordered_paths,
     load_station_catalog,
 )
 from mooby.worker.classifier import ClassifierAdapter, ModelArtifactError, ModelPrediction
+from mooby.worker.event_persistence import DraftEvent
 from mooby.worker.event_fields import (
+    EVIDENCE_QUOTE_RULES_VERSION,
     EVENT_TIME_RULES_VERSION,
     EVENT_TIMEZONE,
     extract_event_time_candidate,
+    select_exact_evidence_quote,
+    validate_exact_evidence_quote,
 )
 from mooby.worker.queue import claim_batch, finish_attempt
 
@@ -38,8 +44,10 @@ ResultStatus = Literal[
 ]
 
 KEYWORD_RULES_VERSION = "krl-keyword-prefilter-v1"
+LOCATION_RULES_VERSION = "ordered-confirmed-path-mentions-v1"
+DRAFT_EVENT_RULES_VERSION = "single-station-or-confirmed-segment-draft-v1"
 NORMALIZATION_VERSION = "nfkc-casefold-whitespace-v1"
-PROCESSOR_CODE_VERSION = "classification-worker-slice-v3"
+PROCESSOR_CODE_VERSION = "classification-worker-slice-v5"
 INTAKE_WINDOW = timedelta(hours=1)
 KEYWORDS = (
     "gangguan",
@@ -160,6 +168,19 @@ class ProcessingOutcome:
     reason_code: str | None = None
     note_detail: dict[str, Any] = field(default_factory=dict)
     retry_after_seconds: int | None = None
+    draft_event: DraftEvent | None = None
+
+
+@dataclass(frozen=True)
+class StructuredLocation:
+    status: Literal["station_resolved", "segment_resolved", "unresolved", "ambiguous"]
+    station_ids: tuple[str, ...]
+    line_id: str | None = None
+    path_id: str | None = None
+    path_version: int | None = None
+    direction: str | None = None
+    start_station_id: str | None = None
+    end_station_id: str | None = None
 
 
 def normalize_text(raw_text: str) -> str:
@@ -228,6 +249,210 @@ def resolve_station_mentions(
     return StationResolution("resolved", tuple(sorted(found)))
 
 
+def _ordered_station_ids_in_text(
+    normalized_text: str,
+    station_catalog: Sequence[StationReference],
+) -> tuple[str, ...] | None:
+    """Return unique station IDs in text order; ambiguous/overlapping aliases fail closed."""
+    aliases: dict[str, set[str]] = {}
+    for station in station_catalog:
+        for name in (station.canonical_name, *station.aliases):
+            normalized_name = normalize_text(name)
+            if normalized_name:
+                aliases.setdefault(normalized_name, set()).add(station.station_id)
+
+    mentions: list[tuple[int, int, str]] = []
+    for alias, station_ids in aliases.items():
+        matches = list(
+            re.finditer(rf"(?<!\w){re.escape(alias)}(?!\w)", normalized_text)
+        )
+        if matches and len(station_ids) != 1:
+            return None
+        if matches:
+            station_id = next(iter(station_ids))
+            mentions.extend((match.start(), match.end(), station_id) for match in matches)
+
+    mentions.sort(key=lambda value: (value[0], -(value[1] - value[0])))
+    ordered: list[str] = []
+    previous_end = -1
+    previous_start = -1
+    previous_station: str | None = None
+    for start, end, station_id in mentions:
+        if start < previous_end:
+            if start == previous_start and station_id == previous_station:
+                continue
+            return None
+        if not ordered or ordered[-1] != station_id:
+            if station_id not in ordered:
+                ordered.append(station_id)
+        previous_start, previous_end, previous_station = start, end, station_id
+    return tuple(ordered)
+
+
+def _resolve_structured_location(
+    normalized_text: str,
+    station_resolution: StationResolution,
+    station_catalog: Sequence[StationReference] | None,
+    path_catalog: Sequence[OrderedPathReference] | None,
+) -> StructuredLocation:
+    if station_resolution.status != "resolved" or station_catalog is None:
+        return StructuredLocation("unresolved", station_resolution.station_ids)
+
+    ordered_ids = _ordered_station_ids_in_text(normalized_text, station_catalog)
+    if ordered_ids is None or set(ordered_ids) != set(station_resolution.station_ids):
+        return StructuredLocation("ambiguous", station_resolution.station_ids)
+    if len(ordered_ids) == 1:
+        return StructuredLocation("station_resolved", ordered_ids)
+    if path_catalog is None:
+        return StructuredLocation("unresolved", ordered_ids)
+
+    matching_paths: list[OrderedPathReference] = []
+    for path in path_catalog:
+        cursor = -1
+        for station_id in ordered_ids:
+            try:
+                cursor = path.station_ids.index(station_id, cursor + 1)
+            except ValueError:
+                break
+        else:
+            matching_paths.append(path)
+
+    if len(matching_paths) != 1:
+        status: Literal["unresolved", "ambiguous"] = (
+            "ambiguous" if matching_paths else "unresolved"
+        )
+        return StructuredLocation(status, ordered_ids)
+
+    path = matching_paths[0]
+    return StructuredLocation(
+        status="segment_resolved",
+        station_ids=ordered_ids,
+        line_id=path.line_id,
+        path_id=path.path_id,
+        path_version=path.path_version,
+        direction=path.direction,
+        start_station_id=ordered_ids[0],
+        end_station_id=ordered_ids[-1],
+    )
+
+
+def _build_draft_event(
+    snapshot: SourceSnapshot,
+    *,
+    pipeline_version: str | None,
+    location: StructuredLocation,
+    station_catalog: Sequence[StationReference] | None,
+    event_time: Any,
+    quote: Any,
+) -> tuple[DraftEvent | None, str | None]:
+    if not pipeline_version or not pipeline_version.strip():
+        return None, "pipeline_version_unavailable"
+    if location.status not in {"station_resolved", "segment_resolved"}:
+        return None, "location_unresolved"
+    if quote.status != "validated" or not quote.quote:
+        return None, "evidence_quote_unresolved"
+    if station_catalog is None:
+        return None, "station_catalog_unavailable"
+    if (
+        not isinstance(snapshot.capture_hash, str)
+        or re.fullmatch(r"[0-9a-f]{64}", snapshot.capture_hash) is None
+    ):
+        return None, "source_digest_invalid"
+    if snapshot.platform not in {"x", "threads", "rss", "web"}:
+        return None, "source_platform_unsupported"
+    if not isinstance(snapshot.canonical_url, str) or not snapshot.canonical_url.startswith("https://"):
+        return None, "source_url_invalid"
+    if (
+        not isinstance(snapshot.published_at, datetime)
+        or snapshot.published_at.tzinfo is None
+        or snapshot.published_at.utcoffset() is None
+        or not isinstance(snapshot.captured_at, datetime)
+        or snapshot.captured_at.tzinfo is None
+        or snapshot.captured_at.utcoffset() is None
+        or snapshot.published_at_basis not in {"dom_datetime", "feed_timestamp", "page_timestamp"}
+    ):
+        return None, "source_provenance_incomplete"
+
+    stations = {station.station_id: station for station in station_catalog}
+    if location.status == "station_resolved":
+        station_id = location.station_ids[0]
+        station = stations.get(station_id)
+        if station is None:
+            return None, "station_reference_missing"
+        title = f"Gangguan layanan KRL di {station.canonical_name}"
+        summary = f"Laporan gangguan layanan KRL menyebut Stasiun {station.canonical_name}."
+        event_kind: Literal["station", "segment"] = "station"
+        start_station_id = end_station_id = None
+        line_id = direction = path_id = None
+        path_version = None
+        event_station_id = station_id
+    else:
+        start_station = stations.get(location.start_station_id or "")
+        end_station = stations.get(location.end_station_id or "")
+        if start_station is None or end_station is None:
+            return None, "station_reference_missing"
+        title = (
+            "Gangguan layanan KRL antara "
+            f"{start_station.canonical_name} dan {end_station.canonical_name}"
+        )
+        summary = (
+            "Laporan gangguan layanan KRL pada lintas "
+            f"{start_station.canonical_name}–{end_station.canonical_name}."
+        )
+        event_kind = "segment"
+        event_station_id = None
+        start_station_id = location.start_station_id
+        end_station_id = location.end_station_id
+        line_id = location.line_id
+        direction = location.direction
+        path_id = location.path_id
+        path_version = location.path_version
+
+    try:
+        validate_exact_evidence_quote(snapshot.raw_text, quote.quote)
+    except ValueError:
+        return None, "evidence_quote_unresolved"
+    quote_start = snapshot.raw_text.find(quote.quote)
+    if quote_start < 0:
+        return None, "evidence_quote_unresolved"
+
+    return DraftEvent(
+        event_id=uuid5(
+            NAMESPACE_URL,
+            f"mooby-event-draft:{snapshot.snapshot_id}:{pipeline_version}",
+        ),
+        source_snapshot_id=snapshot.snapshot_id,
+        raw_content_id=snapshot.raw_content_id,
+        pipeline_version=pipeline_version,
+        event_kind=event_kind,
+        station_id=event_station_id,
+        line_id=line_id,
+        start_station_id=start_station_id,
+        end_station_id=end_station_id,
+        direction=direction,
+        path_id=path_id,
+        path_version=path_version,
+        event_at=event_time.event_at,
+        event_time_raw_phrase=(
+            event_time.raw_phrase if event_time.status == "parsed_candidate" else None
+        ),
+        event_time_method=event_time.method,
+        event_time_certainty=event_time.certainty,
+        title=title,
+        summary=summary,
+        source_platform=snapshot.platform,
+        canonical_url=snapshot.canonical_url,
+        source_digest=snapshot.capture_hash,
+        source_published_at=snapshot.published_at,
+        source_published_at_basis=snapshot.published_at_basis,
+        captured_at=snapshot.captured_at,
+        raw_text=snapshot.raw_text,
+        evidence_quote=quote.quote,
+        quote_start_char=quote_start,
+        validator_version=EVIDENCE_QUOTE_RULES_VERSION,
+    ), None
+
+
 def _prediction_metadata(prediction: ModelPrediction) -> dict[str, Any]:
     return {
         "label": prediction.label,
@@ -241,13 +466,15 @@ def _prediction_metadata(prediction: ModelPrediction) -> dict[str, Any]:
 def process_snapshot(
     snapshot: SourceSnapshot,
     *,
+    pipeline_version: str | None = None,
     database_now: datetime,
     classifier: ClassifierAdapter,
     settings: WorkerSettings,
     station_catalog: Sequence[StationReference] | None = None,
     station_catalog_loader: Callable[[], Sequence[StationReference]] | None = None,
+    path_catalog_loader: Callable[[date], Sequence[OrderedPathReference]] | None = None,
 ) -> ProcessingOutcome:
-    """Run the classification-only pipeline after a trusted source read.
+    """Classify and prepare a safe, non-published draft after trusted source read.
 
     Thresholds and accepted timestamp provenance values come from environment
     configuration; neither has an implicit default.
@@ -256,6 +483,8 @@ def process_snapshot(
         "code_version": PROCESSOR_CODE_VERSION,
         "keyword_rules_version": KEYWORD_RULES_VERSION,
         "normalization_version": NORMALIZATION_VERSION,
+        "location_rules_version": LOCATION_RULES_VERSION,
+        "draft_event_rules_version": DRAFT_EVENT_RULES_VERSION,
         "model_artifacts": classifier.artifact_manifest,
     }
 
@@ -347,6 +576,27 @@ def process_snapshot(
             metadata,
         )
 
+    path_catalog: Sequence[OrderedPathReference] | None = None
+    if station_resolution.status == "resolved" and len(station_resolution.station_ids) > 1:
+        if path_catalog_loader is not None:
+            path_catalog = path_catalog_loader(now_utc.date())
+    location = _resolve_structured_location(
+        normalized,
+        station_resolution,
+        station_catalog,
+        path_catalog,
+    )
+    metadata["structured_location_candidate"] = {
+        "status": location.status,
+        "station_ids": list(location.station_ids),
+        "line_id": location.line_id,
+        "path_id": location.path_id,
+        "path_version": location.path_version,
+        "direction": location.direction,
+        "start_station_id": location.start_station_id,
+        "end_station_id": location.end_station_id,
+    }
+
     if settings.threshold_error is not None:
         metadata["threshold_variable"] = settings.threshold_error.variable
         return _reason(
@@ -423,6 +673,22 @@ def process_snapshot(
         "severity": severity.label,
     }
     event_time = extract_event_time_candidate(snapshot.raw_text, published_at)
+    required_station_ids: tuple[str, ...] | None = None
+    if location.status == "station_resolved" and location.station_ids:
+        required_station_ids = (location.station_ids[0],)
+    elif (
+        location.status == "segment_resolved"
+        and location.start_station_id is not None
+        and location.end_station_id is not None
+    ):
+        required_station_ids = (location.start_station_id, location.end_station_id)
+    quote_candidate = select_exact_evidence_quote(
+        snapshot.raw_text,
+        resolved_station_ids=station_resolution.station_ids,
+        station_catalog=tuple(station_catalog or ()),
+        matched_keywords=tuple(matched_keywords),
+        required_station_ids=required_station_ids,
+    )
     metadata["event_time_candidate"] = {
         "status": event_time.status,
         "event_at": event_time.event_at.isoformat() if event_time.event_at else None,
@@ -431,7 +697,54 @@ def process_snapshot(
         "timezone": EVENT_TIMEZONE.key,
         "rules_version": EVENT_TIME_RULES_VERSION,
     }
-    return ProcessingOutcome("succeeded", result_metadata=metadata)
+    metadata["evidence_quote_validation"] = {
+        "status": quote_candidate.status,
+        "sha256": quote_candidate.sha256,
+        "character_count": quote_candidate.character_count,
+        "rules_version": EVIDENCE_QUOTE_RULES_VERSION,
+    }
+    draft_event, draft_blocker = _build_draft_event(
+        snapshot,
+        pipeline_version=pipeline_version,
+        location=location,
+        station_catalog=station_catalog,
+        event_time=event_time,
+        quote=quote_candidate,
+    )
+    metadata["event_draft_persistence"] = {
+        "status": "ready_for_atomic_insert" if draft_event is not None else "not_created",
+        "event_id": str(draft_event.event_id) if draft_event is not None else None,
+        "reason": draft_blocker,
+        "category": None,
+        "severity_storage": "processing_run_metadata_only",
+        "verification_status": "unverified" if draft_event is not None else None,
+        "publication_status": "not_eligible" if draft_event is not None else None,
+    }
+    blockers = []
+    if location.status not in {"station_resolved", "segment_resolved"}:
+        blockers.append("station_or_confirmed_path_unresolved")
+    if quote_candidate.status != "validated":
+        blockers.append("evidence_quote_unresolved")
+    if draft_event is None and draft_blocker not in {
+        None,
+        "location_unresolved",
+        "evidence_quote_unresolved",
+    }:
+        blockers.append(draft_blocker)
+    metadata["event_stage_readiness"] = {
+        "status": "draft_ready" if draft_event is not None else "not_ready",
+        "blockers": blockers,
+        "notices": (
+            []
+            if event_time.status == "parsed_candidate"
+            else ["event_time_unknown_or_ambiguous"]
+        ),
+    }
+    return ProcessingOutcome(
+        "succeeded",
+        result_metadata=metadata,
+        draft_event=draft_event,
+    )
 
 
 def contains_keyword(normalized_text: str, keyword: str) -> bool:
@@ -453,8 +766,9 @@ def process_and_finish_attempt(
     transient_retry_after_seconds: int,
     station_catalog: Sequence[StationReference] | None = None,
     station_catalog_loader: Callable[[], Sequence[StationReference]] | None = None,
+    path_catalog_loader: Callable[[date], Sequence[OrderedPathReference]] | None = None,
 ) -> tuple[ProcessingOutcome, str]:
-    """Process one loaded snapshot and persist outcome through finish_attempt."""
+    """Process one snapshot and atomically persist its run and optional event draft."""
     _assert_snapshot_identity(item, snapshot)
     if transient_retry_after_seconds < 1:
         raise ValueError("transient_retry_after_seconds must be positive")
@@ -478,11 +792,13 @@ def process_and_finish_attempt(
         try:
             outcome = process_snapshot(
                 snapshot,
+                pipeline_version=item["pipeline_version"],
                 database_now=now,
                 classifier=classifier,
                 settings=settings,
                 station_catalog=station_catalog,
                 station_catalog_loader=station_catalog_loader,
+                path_catalog_loader=path_catalog_loader,
             )
         except Exception as exc:
             outcome = ProcessingOutcome(
@@ -528,6 +844,7 @@ def process_and_finish_attempt(
         result_metadata=outcome.result_metadata,
         reason_code=outcome.reason_code,
         note_detail=outcome.note_detail,
+        draft_event=outcome.draft_event,
     )
     return outcome, run_id
 
@@ -583,7 +900,7 @@ def run_once(
     lease_seconds: int,
     transient_retry_after_seconds: int,
 ) -> RunOnceResult:
-    """Claim and process at most one item; never publishes an event."""
+    """Claim at most one item; persist eligible drafts internally without publishing."""
     if not pipeline_version.strip() or not worker_id.strip():
         raise ValueError("pipeline_version and worker_id must not be empty")
     if max_attempts < 1 or lease_seconds < 1 or transient_retry_after_seconds < 1:
@@ -626,5 +943,8 @@ def run_once(
         max_attempts=max_attempts,
         transient_retry_after_seconds=transient_retry_after_seconds,
         station_catalog_loader=lambda: load_station_catalog(conn),
+        path_catalog_loader=lambda as_of: load_confirmed_ordered_paths(
+            conn, as_of=as_of
+        ),
     )
     return RunOnceResult(claimed=True, outcome=outcome, run_id=run_id)

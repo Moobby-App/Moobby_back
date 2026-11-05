@@ -5,6 +5,8 @@ from uuid import uuid4
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
+from mooby.worker.event_persistence import DraftEvent, persist_draft_event
+
 CLAIM_BATCH_SQL = """
 WITH picked AS (
     SELECT source_snapshot_id, pipeline_version
@@ -92,6 +94,7 @@ def finish_attempt(
     result_metadata: dict[str, Any] | None = None,
     reason_code: str | None = None,
     note_detail: dict[str, Any] | None = None,
+    draft_event: DraftEvent | None = None,
 ) -> str:
     queue_status_by_result = {
         "succeeded": "succeeded",
@@ -129,6 +132,14 @@ def finish_attempt(
 
     if note_type is not None and not (reason_code or "").strip():
         raise ValueError(f"{result_status} requires a reason_code")
+    if draft_event is not None:
+        if result_status != "succeeded":
+            raise ValueError("draft events may only be persisted for succeeded attempts")
+        if (
+            str(draft_event.source_snapshot_id) != str(item["source_snapshot_id"])
+            or draft_event.pipeline_version != item["pipeline_version"]
+        ):
+            raise ValueError("draft event identity does not match claimed item")
 
     run_id = uuid4()
     source_snapshot_id = item["source_snapshot_id"]
@@ -209,6 +220,9 @@ def finish_attempt(
                 embedding_model_digest,
             ),
         )
+
+        if draft_event is not None:
+            persist_draft_event(conn, draft=draft_event, run_id=run_id)
 
         if note_type is not None:
             conn.execute(

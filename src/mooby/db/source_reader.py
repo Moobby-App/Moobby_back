@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from collections.abc import Mapping
 from uuid import UUID
 
@@ -26,6 +26,15 @@ class StationReference:
     station_id: str
     canonical_name: str
     aliases: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OrderedPathReference:
+    path_id: str
+    path_version: int
+    line_id: str
+    direction: str
+    station_ids: tuple[str, ...]
 
 
 class StationCatalogUnavailable(RuntimeError):
@@ -55,6 +64,26 @@ _LOAD_STATION_CATALOG_SQL = """
 SELECT station_id, canonical_name, aliases
 FROM reference.krl_stations
 ORDER BY station_id
+"""
+
+_LOAD_CONFIRMED_PATHS_SQL = """
+SELECT
+    p.path_id,
+    p.path_version,
+    p.line_id,
+    s.direction,
+    s.seq,
+    s.station_id
+FROM nlp.line_paths AS p
+JOIN nlp.line_path_stations AS s
+  ON s.path_id = p.path_id
+ AND s.path_version = p.path_version
+WHERE p.review_status = 'confirmed'
+  AND (p.effective_since IS NULL OR p.effective_since <= %s)
+  AND (p.effective_until IS NULL OR p.effective_until >= %s)
+  AND (s.effective_since IS NULL OR s.effective_since <= %s)
+  AND (s.effective_until IS NULL OR s.effective_until >= %s)
+ORDER BY p.path_id, p.path_version, s.direction, s.seq
 """
 
 
@@ -101,6 +130,48 @@ def load_station_catalog(conn: Connection) -> list[StationReference]:
             raise StationCatalogUnavailable("invalid aliases")
         catalog.append(StationReference(station_id, canonical_name, alias_values))
     return catalog
+
+
+def load_confirmed_ordered_paths(
+    conn: Connection,
+    *,
+    as_of: date,
+) -> list[OrderedPathReference]:
+    """Load only confirmed, effective path sequences for deterministic matching."""
+    with conn.transaction():
+        cursor = conn.execute(
+            _LOAD_CONFIRMED_PATHS_SQL,
+            (as_of, as_of, as_of, as_of),
+        )
+        rows = cursor.fetchall()
+        columns = [column.name for column in cursor.description]
+    grouped: dict[tuple[str, int, str, str], list[tuple[int, str]]] = {}
+    for row in rows:
+        values = dict(row) if isinstance(row, Mapping) else dict(zip(columns, row, strict=True))
+        key = (
+            values["path_id"],
+            values["path_version"],
+            values["line_id"],
+            values["direction"],
+        )
+        grouped.setdefault(key, []).append((values["seq"], values["station_id"]))
+
+    paths: list[OrderedPathReference] = []
+    for (path_id, path_version, line_id, direction), stations in grouped.items():
+        stations.sort(key=lambda item: item[0])
+        sequences = [sequence for sequence, _ in stations]
+        if sequences != list(range(1, len(stations) + 1)):
+            raise ValueError(f"Confirmed path sequence is invalid: {path_id}/{direction}")
+        paths.append(
+            OrderedPathReference(
+                path_id=path_id,
+                path_version=path_version,
+                line_id=line_id,
+                direction=direction,
+                station_ids=tuple(station_id for _, station_id in stations),
+            )
+        )
+    return paths
 
 
 def load_snapshot(
