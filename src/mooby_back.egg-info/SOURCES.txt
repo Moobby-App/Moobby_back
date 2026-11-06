@@ -5,6 +5,7 @@ src/mooby/api/app.py
 src/mooby/api/config.py
 src/mooby/api/models.py
 src/mooby/api/repository.py
+src/mooby/api/synthetic_fixtures.py
 src/mooby/db/source_reader.py
 src/mooby/worker/classifier.py
 src/mooby/worker/event_fields.py

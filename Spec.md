@@ -7,7 +7,7 @@
 
 ## 1. Purpose
 
-This specification defines a system that turns news and user-generated rail reports already stored in the existing `collection` database schema into versioned, structured, evidence-backed disruption events. A scheduled Python worker reads existing collection data, applies a one-hour publication-time gate and a versioned keyword prefilter, then performs text processing, station resolution, event correlation, automated verification, and publication. A FastAPI gateway exposes an app-safe read interface through `app_api`; the iOS application never connects directly to PostgreSQL.
+This specification defines a system that turns news and user-generated rail reports already stored in the existing `collection` database schema into versioned, structured, evidence-backed disruption events. A scheduled Python worker reads existing collection data, applies a one-hour publication-time gate and a versioned keyword prefilter, then performs text processing, station resolution, NLP acceptance, and immediate atomic publication. Correlation and embeddings are optional downstream work, never publication prerequisites. A FastAPI gateway exposes an app-safe read interface through `app_api`; the iOS application never connects directly to PostgreSQL.
 
 The system supports two request paths:
 
@@ -22,7 +22,7 @@ The system must distinguish a real lack of matching reports from unavailable sou
 2. Move expensive classification and event embedding work to scheduled batch processing.
 3. Make GPS, route, and station-based lookups deterministic and explainable.
 4. Use vector similarity for free-text retrieval and duplicate candidates, never as proof that reports are true or describe the same event.
-5. Publish only events that pass automated validation, automated verification rules, and publication policy; no human approval is required.
+5. Publish each new processor-accepted disruption immediately in the worker transaction; no human approval, separate verifier, or correlation/cluster step is required.
 6. Keep private source records separate from NLP processing outputs and app-facing data.
 7. Make worker processing repeatable, idempotent, auditable, versioned, and recoverable.
 8. Prevent the iOS application from holding database credentials or reading private schemas.
@@ -55,8 +55,8 @@ Scheduled Worker (Python 3.12)
   ├─ embeds extracted station-name spans and searches station-reference vectors
   ├─ classifies disruption relevance and operational severity
   ├─ resolves station/time/path with deterministic rules
-  ├─ embeds eligible disruption text for event retrieval/correlation
-  ├─ automatically validates and publishes; no human approval step
+  ├─ automatically publishes accepted valid drafts in the queue/run transaction
+  ├─ may embed/correlate later; neither blocks publication
   └─ writes immutable, versioned results and processing records → nlp
 
 FastAPI / Uvicorn Gateway (Python 3.12, reached through the configured NGROK tunnel)
@@ -191,10 +191,10 @@ These examples guide classification; they are not a complete incident-category l
 7. **Classify relevance and severity:** classify the post text as disruption/not disruption and, when supported, assign `light`, `moderate`, or `severe` under §7.2. Station-vector results may provide reference context but cannot establish that an incident happened. Leave unsupported severity null/blank. Use scikit-learn character TF-IDF + logistic regression as baseline; IndoBERTweet is optional later. Store model artifact version/digest and prediction metadata. Non-relevant, uncertain, or below-threshold posts are automatically skipped with a reason; no human-review queue is required.
 8. **Extract structured fields with deterministic rules:** resolve station, line/path, segment endpoints/direction, and event time from versioned aliases, route data, regex, and Python rules. Incident category is not an initial NLP target; omit it unless supplied by a deterministic rule. Validate outputs.
 9. **Parse event time:** parse explicit values and relative phrases with versioned rules. Resolve relative phrases against source publication time in `Asia/Jakarta`, never worker processing time. If time cannot be safely resolved, preserve it as unknown.
-10. **Generate the event embedding:** for a relevant eligible disruption, embed the approved derived post text with the pinned `multilingual-e5-small` artifact. Use this event vector for filtered retrieval and duplicate candidates, not as verification.
-11. **Correlate and deduplicate:** use vector similarity only to produce candidates. Accept cluster membership only through deterministic rules for compatible resolved station/segment, time window, and category where available. Similarity, report count, and model confidence are not truth verification.
-12. **Validate and automatically publish:** validate output schema, exact evidence integrity, timestamp gate, model thresholds, structured fields, and publication policy. `verified` means these automated checks passed, not official confirmation. Publish eligible versions without human approval. If a gate fails, automatically suppress/skip, record the specific reason, and preserve source/run history.
-13. **Persist an immutable version:** write event version, associations, exact evidence quote, embedding, source/model/rule digests, and processing outcome to `nlp`. Keep prior versions. Record all skipped source snapshots and reasons.
+10. **Accept and atomically publish:** NLP acceptance means `ProcessingOutcome.result_status == "succeeded"` **and** `draft_event is not None`, after the processor's existing intake-time/provenance, keyword, station/location, relevance (`disruption`), relevance/severity thresholds, supported severity, structural/source provenance, and exact-evidence checks. Classification success or `processing_queue.status = 'succeeded'` alone is insufficient: a succeeded classification may still have unresolved location/evidence and no draft. Unknown/ambiguous event time remains supported as null and does not independently block an otherwise valid draft.
+11. **Persist the accepted new version:** `finish_attempt` inserts the queue outcome, processing run, event version, source provenance, and exact evidence in one transaction. Insert the new version directly as `verification_status='verified'` and `publication_status='published'`, with both `verified_at` and `published_at` from the database transaction clock. `verified` means machine-accepted by this pipeline, never operator approval or official confirmation. No human review queue, separate verification, report-count threshold, or correlation/cluster membership is required. Any insert/validation failure rolls back the entire attempt. Skipped, rejected, errored, below-threshold, non-disruption, or no-valid-draft outcomes create no published version.
+12. **Optional downstream enrichment:** embeddings and correlation/deduplication can improve retrieval or grouping after publication; their absence or unresolved cluster compatibility must not suppress an accepted event. Path A continues to read the existing latest verified/published `app_api` projection with canonical station IDs, `affected_station_ids`, confirmed reference paths, and the database-clock 24-hour window. This change applies only to new inserts; do not update/promote old drafts or overwrite versions on conflict. Synthetic replay/fixtures remain separate from the normal feed.
+13. **Retain immutable provenance:** the atomic publication transaction already writes event version, associations, exact evidence quote, source/model/rule digests, and processing outcome to `nlp`; an embedding is optional. Keep prior versions. Record all skipped source snapshots and reasons.
 14. **Update queue state:** mark completed, retryable, skipped, rejected, or failed with timestamps and reason codes. Queue completion and output persistence must be coordinated transactionally where possible.
 
 ### 7.4 Evidence and output integrity
@@ -208,7 +208,7 @@ These examples guide classification; they are not a complete incident-category l
 
 ## 8. Event correlation and deduplication
 
-Correlation is a batch step that prevents repeated source posts about one disruption from appearing as repeated independent events.
+Correlation is optional downstream enrichment for grouping repeated source posts. Publication never waits for correlation or cluster membership; separate accepted reports may appear before grouping.
 
 1. Restrict candidate comparison to posts with compatible resolved station, event-time window, and category.
 2. Use pgvector similarity on the compatible subset to find likely related reports. Similarity produces candidate pairs/clusters only.
@@ -216,7 +216,7 @@ Correlation is a batch step that prevents repeated source posts about one disrup
 4. Preserve individual source snapshots, source objects, and internal exact quotes under a correlated event. Deduplication must not discard provenance.
 5. A count of related posts may be displayed only as a count of reports if the product chooses to show it; it must not be described as verification or proof.
 6. For station events, require compatible resolved station, time window, and category. For segment events, compare line, ordered endpoints, direction, and path variant when resolved, plus time window and compatible category. Do not merge segments on different branches merely because they share a line label.
-7. If station/segment, time, or category compatibility cannot be resolved safely, do not auto-merge. Keep separate records or suppress automated publication and log the reason; do not create a manual-review dependency.
+7. If station/segment, time, or category compatibility cannot be resolved safely, do not auto-merge. Keep separate published records and log the correlation reason; do not suppress processor-accepted events or create a manual-review dependency.
 
 ## 9. Station and route resolution
 
@@ -500,7 +500,7 @@ Configuration should be explicit, versioned, and validated at startup. It should
 - Station alias/reference-data version, vector-candidate threshold followed by deterministic station validation, route/path variant data version, GTFS source feed digest/effective date, crosswalk version, and direction conventions.
 - One-hour intake window; source publication timestamp/basis policy; time parsing rules version, display timezone, freshness anchor policy, stale threshold (8h), expiration/request window (24h).
 - Correlation/deduplication rules version, compatible categories, and time-window settings.
-- Automated verification and publication policy version; no human approval configuration.
+- Processor acceptance/publication rules version; no human approval or separate-verifier configuration.
 - Optional Ollama URL/model, JSON schema version, timeout, and whether constrained rewriting is enabled.
 - API result limit, authentication settings, tunnel URL configuration, query timeout, and rate controls.
 
@@ -512,12 +512,12 @@ Secrets and environment-specific URLs must not be stored in the repository. Chan
    - Implement the queue dispatcher inside the worker service: poll recent committed snapshot IDs read-only and enqueue them promptly without waiting for a group of five. It may read only the approved source snapshot fields needed for discovery and write only corresponding `nlp.processing_queue` rows. Define its least-privilege identity and queue insert grant in a reviewed migration; do not add a trigger or change `collection`/Collector behavior by implication. Until this dispatcher and its access are installed, newly collected snapshots are not automatically queued.
 2. Reconcile the audited stop crosswalk, curate aliases, and review candidate path variants and ordered station sequences for the five-line scope; add data-quality checks. Keep `MERAK` out of scope and `SG` catalog-only unless a later scope decision changes that.
 3. Add ordered SQL migrations for `nlp`, roles, queue, event-version structures, evidence, embeddings, skip/error records, and indexes.
-   - Vector storage and pgvector search are required by this Spec but are deferred from migrations 001–003. A future ordered migration must add event-version embedding storage with model/version provenance, pgvector support, and vector dimension/index configuration aligned to the pinned model artifact. It must support filtered semantic retrieval and embedding-based duplicate candidate generation; finalize the artifact dimension and index configuration before designing that migration.
+   - Vector storage and pgvector search support optional downstream retrieval; neither blocks NLP acceptance or Path A publication. They were deferred from migrations 001–003. Migration 004 added required embedding storage; prepared migration 015 makes the embedding/input-version pair nullable because the current accepted-event processor does not produce vectors. Preserve dimension/index compatibility for future filtered retrieval. Migration 015 is not applied by this change. Existing worker column grants from 012/014 omit the four publication status/timestamp columns, so deployment remains blocked pending separately authorized access changes; this implementation does not change roles, grants, RLS, credentials, or collection.
 4. Implement the Python 3.12 worker adapter and `FOR UPDATE SKIP LOCKED` claim/lease flow; prove retry safety and immutable versioning.
 5. Implement the one-hour database-clock intake gate, versioned keyword prefilter, raw-text preservation, normalized derived text, deterministic station mention resolution with the conservative unresolved-station skip gate, relevance/severity classifier adapters (scikit-learn baseline first, IndoBERTweet as an optional later model), deterministic station/segment/time extraction, and exact-quote validation. Add station-reference vector lookup only when a separately reviewed compatible index/provider is available; use it only for candidate retrieval from extracted name spans.
 6. Add `multilingual-e5-small` batch embedding, vector storage, query-compatible embedding adapter, and filtered pgvector retrieval.
-7. Implement deterministic correlation/deduplication rules and record embedding candidates separately from accepted event identity.
-8. Implement output validation, separate malformed-format and legitimate-rejection paths, automated verification/publication state, and auditable skip reasons.
+7. Optionally implement downstream correlation/deduplication; it must not block step 8 or feed visibility.
+8. Atomically publish new processor-accepted valid drafts with verified/published timestamps; preserve separate malformed-format/rejection paths and auditable skip reasons. No additional verifier or correlation prerequisite.
 9. Create `app_api` views/RPCs with strict field projection and eligibility filters. Apply database-clock 24-hour and 8/24-hour freshness rules.
 10. Build the authenticated FastAPI/Pydantic Path A endpoint and typed response contract. Expose it through NGROK for development only after authentication and a dedicated read-only database identity are configured. Verify the iOS app has no database credential or direct database route.
 11. Integrate the iOS Home summary/list/detail against the Path A contract using an environment-specific base URL and an approved authentication flow. Confirm canonical station-ID mapping before enabling route filtering. Add Path B only after compatible query embeddings and filtered vector retrieval are available.
@@ -542,7 +542,7 @@ The implementation is acceptable when all of the following are demonstrated:
 - Duplicate candidates are constrained by station, time window, and compatible category; embedding similarity alone cannot merge or verify events.
 - Station-only posts without coordinates can resolve; unmapped station posts are not guessed and are recorded.
 - Segment events retain line, start/end stations, direction, and a path variant when needed; ordered path-station data determines the affected range. Ambiguous branch/path resolution is not presented as precise.
-- Automated verification/publication gates run before an event becomes visible to `app_api`; no human approval is required. A `verified` state means machine checks passed, not official confirmation.
+- A new succeeded processor result with a valid draft is atomically inserted as verified/published and eligible for the existing `app_api` projection, without human approval, a separate verifier, or correlation. Success without a valid draft is not acceptance. A `verified` state means machine-accepted pipeline output, not official confirmation. Existing drafts are not promoted.
 - GPS/route lookups use structured SQL; free-text uses pgvector with station/time filters applied before similarity where available and a mandatory 24-hour DB-time bound always present.
 - Freshness is computed from the database clock: fresh through 8 hours, stale after 8 and through 24, expired after 24.
 - Empty matches do not imply normal service; source unavailability is a different response state.

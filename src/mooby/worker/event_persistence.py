@@ -1,4 +1,4 @@
-"""Atomic persistence for non-published, unverified event drafts."""
+"""Atomic publication of processor-accepted events and private evidence."""
 
 from __future__ import annotations
 
@@ -51,7 +51,11 @@ def persist_draft_event(
     draft: DraftEvent,
     run_id: UUID,
 ) -> None:
-    """Insert event, provenance, and exact quote in caller's transaction."""
+    """Publish a new accepted draft in the caller's queue/run transaction.
+
+    Existing versions are never promoted on conflict. All inserts roll back
+    together if provenance, evidence, constraints, or permissions fail.
+    """
     if draft.event_kind not in {"station", "segment"}:
         raise ValueError("unsupported draft event kind")
     if not draft.pipeline_version.strip() or not draft.title.strip() or not draft.summary.strip():
@@ -77,14 +81,16 @@ def persist_draft_event(
             processing_run_id, event_kind, line_id, station_id,
             start_station_id, end_station_id, direction, path_id, path_version,
             event_at, event_time_raw_phrase, event_time_method,
-            event_time_certainty, severity, title, summary
+            event_time_certainty, severity, title, summary,
+            verification_status, publication_status, verified_at, published_at
         )
         VALUES (
             %s, 1, %s, %s,
             %s, %s, %s,
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
-            %s, %s, %s
+            %s, %s, %s,
+            'verified', 'published', transaction_timestamp(), transaction_timestamp()
         )
         ON CONFLICT DO NOTHING
         """,

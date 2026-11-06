@@ -47,7 +47,7 @@ KEYWORD_RULES_VERSION = "krl-keyword-prefilter-v1"
 LOCATION_RULES_VERSION = "explicit-lintas-pair-confirmed-path-v2"
 DRAFT_EVENT_RULES_VERSION = "single-station-or-explicit-confirmed-segment-draft-v2"
 NORMALIZATION_VERSION = "nfkc-casefold-whitespace-v1"
-PROCESSOR_CODE_VERSION = "classification-worker-slice-v6"
+PROCESSOR_CODE_VERSION = "classification-worker-slice-v7"
 INTAKE_WINDOW = timedelta(hours=1)
 KEYWORDS = (
     "gangguan",
@@ -557,7 +557,7 @@ def process_snapshot(
     station_catalog_loader: Callable[[], Sequence[StationReference]] | None = None,
     path_catalog_loader: Callable[[date], Sequence[OrderedPathReference]] | None = None,
 ) -> ProcessingOutcome:
-    """Classify and prepare a safe, non-published draft after trusted source read.
+    """Classify and prepare a publication-ready draft after trusted source read.
 
     Thresholds and accepted timestamp provenance values come from environment
     configuration; neither has an implicit default.
@@ -801,8 +801,8 @@ def process_snapshot(
         "reason": draft_blocker,
         "category": None,
         "severity_storage": "event_version_column",
-        "verification_status": "unverified" if draft_event is not None else None,
-        "publication_status": "not_eligible" if draft_event is not None else None,
+        "verification_status": "verified" if draft_event is not None else None,
+        "publication_status": "published" if draft_event is not None else None,
     }
     blockers = []
     if location.status not in {"station_resolved", "segment_resolved"}:
@@ -984,7 +984,7 @@ def run_once(
     lease_seconds: int,
     transient_retry_after_seconds: int,
 ) -> RunOnceResult:
-    """Claim at most one item; persist eligible drafts internally without publishing."""
+    """Claim at most one item; atomically publish processor-accepted drafts."""
     if not pipeline_version.strip() or not worker_id.strip():
         raise ValueError("pipeline_version and worker_id must not be empty")
     if max_attempts < 1 or lease_seconds < 1 or transient_retry_after_seconds < 1:

@@ -154,6 +154,12 @@ def finish_attempt(
     note_detail: dict[str, Any] | None = None,
     draft_event: DraftEvent | None = None,
 ) -> str:
+    """Finish a claimed attempt and publish only its accepted valid draft.
+
+    A succeeded classification without a draft updates audit/queue state only.
+    Publication, provenance, evidence, run, and queue writes share a transaction;
+    no separate verifier or correlation job is needed for a new accepted event.
+    """
     queue_status_by_result = {
         "succeeded": "succeeded",
         "skipped": "skipped",

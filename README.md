@@ -80,11 +80,12 @@ CSV `evaluation/private/synthetic_training_v1.csv` berisi teks tetapi tidak memi
 Replay menjalankan pemrosesan backend atas kolom `raw_text`, mengabaikan label CSV, dan menulis ringkasan agregat tanpa teks. Skrip tidak membuka koneksi database, mengantrekan item, menulis event, atau membuat data terlihat di app. Feed normal `/api/v1/disruptions` tetap hanya berasal dari event yang memenuhi syarat `verified` dan `published`. Gunakan jalur ini untuk pemeriksaan batch classifier dan prefilter, bukan untuk mengisi kartu app.
 
 ```bash
-cd /path/ke/Mooby_Back
+cd /Users/naufal/Moobby_back
 set -a
 source .env
 set +a
 .venv/bin/python scripts/replay_synthetic_batch.py \
+  --input /Users/naufal/Moobby_back/evaluation/private/synthetic_training_v1.csv \
   --confirm-simulation-only
 ```
 
@@ -119,8 +120,24 @@ terverifikasi dan tidak boleh dipakai untuk menilai feed produksi.
 
 - App memanggil FastAPI melalui gateway; app tidak memakai koneksi PostgreSQL.
 - API membaca `app_api.published_disruptions` menggunakan login read-only.
-- Feed normal hanya memuat event `verified` + `published` yang masih berada dalam jendela 24 jam. Draft worker `unverified`/`not_eligible` tidak terlihat.
+- Feed normal hanya memuat event `verified` + `published` yang masih berada dalam jendela 24 jam. Hasil processor baru dengan `result_status=succeeded` dan draft valid langsung disimpan atomik sebagai `verified`/`published`, tanpa review manusia, verifier terpisah, atau menunggu korelasi. `verified` berarti diterima mesin, bukan konfirmasi resmi. Status queue sukses saja tidak cukup; skip/error/non-disruption/tanpa draft valid tidak dipublikasikan. Draft lama tidak dipromosikan.
 - Respons tidak menyertakan raw post text, kutipan bukti internal, data penulis, atau ID sumber privat.
 - Detail endpoint dan status API ada di [`docs/app_api_development.md`](docs/app_api_development.md); aturan produk ada di [`Spec.md`](Spec.md).
 
 Dokumentasi tunnel dan konfigurasi mengikuti [ngrok macOS setup](https://ngrok.com/download/mac-os?tab=download) dan [HTTP/S endpoint guide](https://ngrok.com/docs/gateway/endpoints/http).
+
+### Prasyarat deployment publikasi NLP otomatis
+
+Perubahan worker ini belum siap dijalankan dengan schema/grant 001–014 saja.
+Migrasi baru `015_optional_event_embeddings.sql` disiapkan karena migrasi 004
+mewajibkan embedding yang tidak dibuat processor saat ini; migrasi 015 belum
+diterapkan. Grant worker yang ada juga belum mengizinkan INSERT kolom
+`verification_status`, `publication_status`, `verified_at`, dan `published_at`.
+Grant/role/RLS tidak diubah; akses tersebut memerlukan keputusan terpisah.
+Lihat [kontrak API](docs/app_api_development.md) untuk batasan lengkap.
+
+Tes lokal tanpa database, environment rahasia, atau model privat:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```
