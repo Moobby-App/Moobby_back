@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import sys
 import time
-from urllib.parse import urlparse
 from uuid import UUID
 
 import psycopg
@@ -16,6 +15,8 @@ from psycopg.rows import dict_row
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from worker_runtime import (AlreadyRunning, emit,
+                            single_instance, validate_development_url)
 from mooby.worker.processor import run_available
 from mooby.worker.queue import enqueue_recent_snapshots
 
@@ -65,15 +66,13 @@ def main() -> None:
     if not database_url:
         raise SystemExit("WORKER_DATABASE_URL is not configured.")
 
-    parsed = urlparse(database_url)
-    username = parsed.username or ""
-    expected_ref = args.expected_project_ref
-    if not (
-        parsed.hostname == f"db.{expected_ref}.supabase.co"
-        or username.endswith(f".{expected_ref}")
-    ):
-        raise SystemExit("Database target does not match --expected-project-ref.")
+    validate_development_url(database_url, args.expected_project_ref)
+    with single_instance(PROJECT_ROOT / '.local/worker/instance.lock'):
+        emit('worker_started')
+        _poll(args, database_url)
 
+
+def _poll(args, database_url):
     with psycopg.connect(database_url, row_factory=dict_row) as conn:
         if args.once:
             existing = conn.execute(
@@ -103,30 +102,41 @@ def main() -> None:
                 max_items=args.max_items,
             )
 
-            if enqueued_ids:
-                print(f"enqueued_count: {len(enqueued_ids)}")
-            for result in results:
-                outcome = result.outcome
-                print(
-                    {
-                        "result_status": outcome.result_status if outcome else None,
-                        "reason_code": outcome.reason_code if outcome else None,
-                        "run_id": result.run_id,
-                        "event_draft_status": (
-                            outcome.result_metadata.get("event_draft_persistence", {}).get("status")
-                            if outcome
-                            else None
-                        ),
-                    }
-                )
+            outcomes = [r.outcome for r in results if r.outcome is not None]
+            emit('poll', enqueued_count=len(enqueued_ids), processed_count=len(results),
+                 succeeded_count=sum(o.result_status == 'succeeded' for o in outcomes),
+                 skipped_count=sum(o.result_status == 'skipped' for o in outcomes),
+                 rejected_count=sum(o.result_status == 'policy_rejection' for o in outcomes),
+                 failed_count=sum(o.result_status in {'error', 'format_failure'} for o in outcomes),
+                 accepted_event_count=sum(o.result_status == 'succeeded' and o.draft_event is not None
+                                          for o in outcomes))
 
             if args.once:
-                if not results:
-                    print("No eligible queue item found for this one-shot run.")
                 return
             if not results:
                 time.sleep(args.poll_seconds)
 
 
+def entrypoint():
+    try:
+        main()
+    except AlreadyRunning:
+        emit('duplicate_instance')
+        return 0  # Do not cause launchd to restart a redundant instance forever.
+    except KeyboardInterrupt:
+        emit('worker_stopped')
+        return 0
+    except SystemExit as exc:
+        if exc.code in (None, 0):
+            return 0
+        emit('worker_error')
+        return 1
+    except Exception as exc:
+        emit('worker_error', sqlstate=getattr(exc, 'sqlstate', None))
+        return 1
+    emit('worker_stopped')
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(entrypoint())

@@ -1,0 +1,5 @@
+{
+  "expected_project_ref": "REPLACE_WITH_DEVELOPMENT_PROJECT_REF",
+  "pipeline_version": "REPLACE_WITH_EXISTING_DEVELOPMENT_PIPELINE_VERSION",
+  "worker_id": "mooby-dev-worker-naufal-mac"
+}

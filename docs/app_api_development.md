@@ -93,3 +93,11 @@ set +a
 The app's base URL must be configured per build environment in the iOS project, not hard-coded here. A reserved NGROK domain can keep the Development URL stable; expose the tunnel only after the API authentication flow has been configured. Do not put the NGROK authtoken, database URL, password, or shared server bearer token into the app bundle. The current bearer implementation is a private Development gate, not production user authentication.
 
 The iOS app must map its selected route stations to canonical `open-krl:*` IDs before calling this endpoint. No display-name or array-position fallback is implemented. Path B/free-text search is not part of this slice.
+
+## Optional macOS service supervision
+
+See [API/ngrok LaunchAgents](development_api_launchd.md) for the opt-in localhost
+API and stable-domain tunnel setup. The supervisor reads only the two API secrets
+from local `.env`, keeps all credentials out of arguments/plists/logs, and refuses
+to create a random-domain tunnel when no stable API domain is configured. No agent
+is installed or started by the prepared setup.

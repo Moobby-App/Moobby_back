@@ -37,6 +37,29 @@ the whole migration rolls back, including grants. Stop and plan historical-data
 handling separately. Do not fabricate vectors or mass-promote old drafts. This
 change does not apply migrations or inspect/mutate database contents.
 
+### Worker conflict-target SELECT grants
+
+Migration `017_worker_conflict_target_select.sql` records three narrow column-level
+SELECT grants required by the worker's explicit `ON CONFLICT` targets:
+
+| Table | SELECT columns | Conflict target |
+|---|---|---|
+| `nlp.events` | `event_id` | `(event_id)` |
+| `nlp.event_sources` | `event_id`, `event_version`, `source_snapshot_id` | `(event_id, event_version, source_snapshot_id)` |
+| `nlp.event_evidence` | `evidence_id` | `(evidence_id)` |
+
+These grants have already been applied manually in Development, as reported by
+the project owner. Migration 017 records that state for reproducible deployments;
+this code change did not connect to or independently inspect Development. Repeating
+these GRANTs does not broaden their scope. Follow the existing migration process
+and reconcile its ledger with the manual application before recording deployment.
+
+The sole grantee is `mooby_nlp_worker_dev`; transaction-local owner-role handling
+matches prior migrations. No table-wide SELECT, raw text/evidence access, API view
+access, membership, RLS, ownership, collection object, or other permission changes
+are included. These columns do not provide general event/audit inspection access;
+the rollback smoke's separate post-rollback residue inspector remains necessary.
+
 ## Providing the real model locally
 
 The optional runtime is separate from the API and unit-test dependencies. From
@@ -210,3 +233,10 @@ A published row can be absent from the last query if its location/time falls out
 the existing projection rules. Null/unknown event time is allowed; existing fallback
 freshness policy remains unchanged. Synthetic fixture mode remains an isolated,
 in-memory UI simulation and does not insert/publish normal database events.
+
+## One historical snapshot, rollback-only Development smoke
+
+See [Development smoke harness](development_smoke.md) for one-item real-model
+processing via the existing enqueue/claim helpers, unconditional worker rollback,
+and post-rollback read-only NLP residue inspection. API contract tests are separate. It is manual-only and was not run against a
+database during implementation.

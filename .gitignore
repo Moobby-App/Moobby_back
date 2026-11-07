@@ -20,3 +20,11 @@ htmlcov/
 .idea/
 
 /evaluation/private/
+
+# Opt-in Development worker configuration and local logs/lock
+/ops/launchd/development-worker.json
+/.local/worker/
+
+# Opt-in API/tunnel config, lifecycle logs and instance locks
+/ops/launchd/development-api.json
+/.local/services/

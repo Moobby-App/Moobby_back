@@ -148,3 +148,20 @@ Tes lokal tanpa database, environment rahasia, atau model privat:
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
+
+## Worker Development otomatis di Mac
+
+CLI worker yang ada mendukung polling berkelanjutan. Setup LaunchAgent opt-in,
+validasi project Development/login worker, lock satu instance, log aman, serta
+langkah install/start/stop/status/uninstall ada di
+[panduan launchd](docs/development_worker_launchd.md). Template belum dipasang atau
+dijalankan; aktivasi akan memproses dan menyimpan hasil Development sungguhan.
+
+## API dan tunnel Development otomatis di Mac
+
+Template LaunchAgent terpisah untuk API localhost dan ngrok tersedia secara opt-in.
+Lihat [panduan API/ngrok launchd](docs/development_api_launchd.md) untuk konfigurasi,
+install/start/status/stop/uninstall, dan batas log. Domain ngrok stabil belum
+ditemukan pada konfigurasi lokal saat persiapan; tunnel tetap diblokir sampai
+pemilik mengonfirmasi domain yang sudah dikonfigurasi. Tidak ada service dipasang
+atau dijalankan oleh perubahan ini.
