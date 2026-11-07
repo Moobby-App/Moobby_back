@@ -7,3 +7,5 @@ Requires-Dist: pydantic==2.14.3
 Requires-Dist: psycopg[binary]<4,>=3
 Requires-Dist: scikit-learn==1.9.1
 Requires-Dist: uvicorn[standard]==0.54.0
+Provides-Extra: embedding
+Requires-Dist: sentence-transformers==5.1.2; extra == "embedding"

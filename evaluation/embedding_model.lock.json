@@ -1,8 +1,9 @@
 {
   "model_id": "intfloat/multilingual-e5-small",
   "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
-  "artifact_sha256": "c43093c0c63bdc8984e3ffba0e85b6ce4b8d4c0ed284cd0f95180e3a890f2802",
-  "digest_method": "sha256-sorted-path-and-file-sha256-v1",
+  "artifact_sha256": "35acb78bc7ecf1eeb5650f83d1d839365010be4a2b96fd70da686bebe8ec88d9",
+  "digest_method": "sha256-model-bundle-manifest-json-v1",
   "embedding_dimension": 384,
-  "file_count": 43
+  "file_count": 43,
+  "manifest_file": "embedding_model.manifest.json"
 }

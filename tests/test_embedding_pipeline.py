@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from mooby.worker.embedding import (
-    EventEmbedding, EmbeddingUnavailable, INPUT_VERSION, _runtime, embed_event, artifact_digest)
+    EventEmbedding, EmbeddingUnavailable, INPUT_VERSION, _runtime, embed_event)
+from mooby.worker.bundle_manifest import build_manifest, manifest_digest, DIGEST_METHOD
 from mooby.worker.processor import process_and_finish_attempt
 from mooby.worker.queue import finish_attempt
 import test_automatic_publication as fixtures
@@ -57,9 +58,11 @@ class EmbeddingTests(unittest.TestCase):
             folder = Path(tmp)/'snapshot'; folder.mkdir()
             (folder/'weights').write_bytes(b'unit test artifact, not a real model')
             lock = Path(tmp)/'lock.json'
+            manifest = build_manifest(folder, 'intfloat/multilingual-e5-small', 'pinned')
+            (Path(tmp)/'manifest.json').write_text(json.dumps(manifest))
             data = {'model_id': 'intfloat/multilingual-e5-small', 'revision': 'pinned',
-                    'embedding_dimension':384, 'artifact_sha256': artifact_digest(folder),
-                    'digest_method':'sha256-sorted-path-and-file-sha256-v1'}
+                    'embedding_dimension':384, 'artifact_sha256': manifest_digest(manifest),
+                    'digest_method':DIGEST_METHOD, 'manifest_file':'manifest.json', 'file_count':1}
             lock.write_text(json.dumps(data))
             class Model:
                 def __init__(self, path, **kw):
@@ -80,7 +83,7 @@ class EmbeddingTests(unittest.TestCase):
                 self.assertEqual(digest, data['artifact_sha256'])
                 (folder/'weights').write_bytes(b'changed')
                 _runtime.cache_clear()
-                with self.assertRaises(EmbeddingUnavailable): _runtime()
+                with self.assertRaises(ValueError): _runtime()
             _runtime.cache_clear()
 
 

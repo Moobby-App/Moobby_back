@@ -63,15 +63,87 @@ remote code disabled and CPU inference. Alternatively set `MOOBY_EMBEDDING_MODEL
 to a trusted local copy of the same complete artifact tree. Successful loads are
 cached per process. Restart the worker after changing its artifact configuration.
 
-Artifact validation compares the measured content digest with the existing lock.
-Serialization is explicitly: iterate sorted relative POSIX file paths, excluding
-`.cache` directory entries; concatenate each UTF-8 path, NUL byte, lowercase file
-SHA256 hex, newline; SHA256 the resulting bytes. This includes weights, tokenizer,
-configuration, and other bundle files. The legacy lock names the digest method but
-has no accompanying producer implementation. If the original bundle used another
-serialization or differs in file inventory, validation fails closed. Reconcile the
-trusted bundle/lock provenance separately; do not overwrite the expected hash merely
-to bypass a mismatch. No lock hash or revision is changed in this implementation.
+## Audited manifest and digest contract
+
+The model ID `intfloat/multilingual-e5-small` and revision
+`614241f622f53c4eeff9890bdc4f31cfecc418b3` are unchanged. The cached snapshot was
+audited locally: exactly 43 snapshot entries, all symlinks to the matching model
+cache's `blobs` directory. For 33 ordinary Git blobs, Git SHA1 of
+`b"blob " + decimal_byte_length + b"\0" + content` matched each cache key
+(the separator is a single NUL byte). For 10 LFS blobs, SHA256(content) matched
+the cache key. This establishes local cache content-address consistency and the
+pinned snapshot layout, not remote-signature authentication or a fresh Hub listing.
+No remote lookup or model download was used for this audit.
+
+`evaluation/embedding_model.manifest.json` records:
+
+```json
+{
+  "format": "model-bundle-manifest-v1",
+  "model_id": "intfloat/multilingual-e5-small",
+  "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+  "files": [{"path": "relative/POSIX/path", "sha256": "lowercase SHA256 of file bytes"}]
+}
+```
+
+The actual manifest contains all 43 entries, not this illustrative placeholder.
+All regular files are included recursively, including dotfiles and `.cache` files
+if present; **there are no exclusions**. File symlinks are dereferenced and their
+target bytes are hashed; link text/absolute target paths are not recorded. A copied
+bundle with regular files instead of symlinks is equivalent if bytes and relative
+names match. Broken symlinks, directory symlinks and special files are rejected.
+Directories themselves, including empty directories, are not manifest entries.
+
+Entries are sorted lexicographically by relative POSIX path (Python Unicode string
+order); paths must be canonical, relative, unique, without `..`, backslash, or NUL.
+Manifest keys are exactly `format`, `model_id`, `revision`, `files`; entry keys are
+exactly `path` and `sha256`. The digest algorithm is
+`sha256-model-bundle-manifest-json-v1`:
+
+1. Validate manifest structure and ordering.
+2. Serialize with Python `json.dumps(manifest, ensure_ascii=False, sort_keys=True,
+   separators=(',', ':'), allow_nan=False)` and encode UTF-8, without a BOM.
+3. SHA256 of ASCII `sha256-model-bundle-manifest-json-v1`, one LF byte,
+   the canonical JSON bytes, and one final LF byte.
+
+Pretty-printing the checked-in JSON does not affect its canonical digest. The lock
+binds the algorithm, manifest filename, model/revision, file count and derived digest.
+The provider checks that binding and recomputes the full file set and every content
+hash before loading a model. Added, missing, renamed or changed files fail closed.
+Validation occurs on model load; a successfully loaded model remains cached until
+process restart, as before.
+
+The historical algorithm label was `sha256-sorted-path-and-file-sha256-v1`, with
+lock digest `c43093c0c63bdc8984e3ffba0e85b6ce4b8d4c0ed284cd0f95180e3a890f2802`.
+Its producer serialization was absent from the repository. The previous provider
+instead produced `ce21f1396ac116e38fc20b9b531780021cfbb0d6ccc032385c05035ff203b07f`.
+Neither value is accepted by the new algorithm. The independently derived manifest
+digest is `35acb78bc7ecf1eeb5650f83d1d839365010be4a2b96fd70da686bebe8ec88d9`.
+Model bytes, model revision, and embedding input/inference behavior are unchanged.
+
+Repeat verification using the existing cache only (no model loading):
+
+```bash
+HF_HUB_OFFLINE=1 .venv/bin/python scripts/verify_embedding_bundle.py
+```
+
+To independently reproduce the manifest and repeat the content-addressed cache audit
+without changing any files, print it to stdout:
+
+```bash
+HF_HUB_OFFLINE=1 .venv/bin/python scripts/verify_embedding_bundle.py --audit-cache
+```
+
+Compare that JSON with the tracked manifest. This tool does not update the lock,
+write a manifest, or download anything. For any mismatch, stop and investigate;
+never regenerate the lock just to accept unexplained file changes. Manifests/locks
+belong in Git, model binaries and absolute cache paths do not.
+
+Focused local tests (temporary files; no cache mutation or database):
+
+```bash
+PYTHONPATH=tests .venv/bin/python -m unittest test_bundle_manifest test_embedding_pipeline.EmbeddingTests -v
+```
 
 Run the offline smoke check before starting a worker:
 

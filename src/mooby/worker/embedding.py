@@ -1,10 +1,11 @@
 """Local-only, pinned multilingual E5 provider. Never substitutes vectors."""
 from dataclasses import dataclass, field
 from functools import lru_cache
-import hashlib
 import json
 import math
 from pathlib import Path
+
+from mooby.worker.bundle_manifest import verify_bundle
 
 LOCK_PATH = Path(__file__).resolve().parents[3] / 'evaluation/embedding_model.lock.json'
 INPUT_VERSION = 'nfkc-casefold-whitespace-v1:e5-passage-v1:l2-v1'
@@ -37,17 +38,6 @@ class EventEmbedding:
         return '[' + ','.join(str(float(v)) for v in self.values) + ']'
 
 
-def artifact_digest(path):
-    """SHA256 of sorted UTF-8 relative-path + NUL + file SHA256 + newline."""
-    digest = hashlib.sha256()
-    files = sorted(f for f in path.rglob('*') if f.is_file() and '.cache' not in f.relative_to(path).parts)
-    for f in files:
-        digest.update(f.relative_to(path).as_posix().encode() + b'\0')
-        with f.open('rb') as handle:
-            digest.update(hashlib.file_digest(handle, 'sha256').hexdigest().encode() + b'\n')
-    return digest.hexdigest()
-
-
 @lru_cache(maxsize=1)
 def _runtime():
     # Successful loads are cached; failures can recover on the next queue retry.
@@ -59,10 +49,11 @@ def _runtime():
         raise EmbeddingUnavailable('incompatible embedding lock')
     path = Path(os.environ['MOOBY_EMBEDDING_MODEL_DIR']) if os.environ.get('MOOBY_EMBEDDING_MODEL_DIR') else Path(snapshot_download(
         lock['model_id'], revision=lock['revision'], local_files_only=True))
-    digest = artifact_digest(path)
-    if (lock.get('digest_method') != 'sha256-sorted-path-and-file-sha256-v1'
-        or digest != lock['artifact_sha256']):
-        raise EmbeddingUnavailable('embedding artifact digest mismatch')
+    manifest_name = lock['manifest_file']
+    if Path(manifest_name).name != manifest_name:
+        raise EmbeddingUnavailable('invalid manifest filename')
+    manifest = json.loads((LOCK_PATH.parent / manifest_name).read_text())
+    digest = verify_bundle(path, manifest, lock)
     model = SentenceTransformer(str(path), device='cpu', local_files_only=True,
                                 trust_remote_code=False)
     if model.get_sentence_embedding_dimension() != DIMENSION:

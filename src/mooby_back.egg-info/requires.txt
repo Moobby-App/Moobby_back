@@ -3,3 +3,6 @@ pydantic==2.14.3
 psycopg[binary]<4,>=3
 scikit-learn==1.9.1
 uvicorn[standard]==0.54.0
+
+[embedding]
+sentence-transformers==5.1.2
