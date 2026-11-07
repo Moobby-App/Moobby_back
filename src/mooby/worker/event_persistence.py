@@ -9,6 +9,7 @@ from uuid import UUID, uuid5
 
 from psycopg import Connection
 
+from mooby.worker.embedding import EventEmbedding
 from mooby.worker.event_fields import validate_exact_evidence_quote
 
 
@@ -50,12 +51,14 @@ def persist_draft_event(
     *,
     draft: DraftEvent,
     run_id: UUID,
+    embedding: EventEmbedding,
 ) -> None:
     """Publish a new accepted draft in the caller's queue/run transaction.
 
     Existing versions are never promoted on conflict. All inserts roll back
     together if provenance, evidence, constraints, or permissions fail.
     """
+    embedding.validate()
     if draft.event_kind not in {"station", "segment"}:
         raise ValueError("unsupported draft event kind")
     if not draft.pipeline_version.strip() or not draft.title.strip() or not draft.summary.strip():
@@ -82,7 +85,8 @@ def persist_draft_event(
             start_station_id, end_station_id, direction, path_id, path_version,
             event_at, event_time_raw_phrase, event_time_method,
             event_time_certainty, severity, title, summary,
-            verification_status, publication_status, verified_at, published_at
+            verification_status, publication_status, verified_at, published_at,
+            embedding, embedding_input_version
         )
         VALUES (
             %s, 1, %s, %s,
@@ -90,7 +94,8 @@ def persist_draft_event(
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
             %s, %s, %s,
-            'verified', 'published', transaction_timestamp(), transaction_timestamp()
+            'verified', 'published', transaction_timestamp(), transaction_timestamp(),
+            %s, %s
         )
         ON CONFLICT DO NOTHING
         """,
@@ -114,6 +119,8 @@ def persist_draft_event(
             draft.severity,
             draft.title,
             draft.summary,
+            embedding.pgvector(),
+            embedding.input_version,
         ),
     )
     conn.execute(

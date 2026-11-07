@@ -12,9 +12,13 @@ from mooby.api.app import create_app
 from mooby.api.config import ApiSettings
 from mooby.api.repository import FeedPage, _SEARCH_SQL
 from mooby.db.source_reader import SourceSnapshot, StationReference
+from mooby.worker.embedding import EventEmbedding
 from mooby.worker.classifier import ModelArtifactError, ModelPrediction
 from mooby.worker.processor import WorkerSettings, process_snapshot
 from mooby.worker.queue import finish_attempt
+
+# Explicit unit-test vector; never used by a production provider.
+TEST_EMBEDDING = EventEmbedding((1.0,) + (0.0,)*383, 'test-model@revision', 'b'*64)
 
 ROOT = Path(__file__).resolve().parents[1]
 NOW = datetime(2026, 11, 6, 1, 0, tzinfo=timezone.utc)
@@ -88,7 +92,10 @@ class AutomaticPublicationTests(unittest.TestCase):
             'pipeline_version': 'test-v1', 'claimed_at': NOW}, worker_id='test-worker',
             result_status=outcome.result_status, code_version='test', rules_version='test',
             source_digest='a'*64, max_attempts=1, reason_code=outcome.reason_code,
-            result_metadata=outcome.result_metadata, draft_event=outcome.draft_event)
+            result_metadata=outcome.result_metadata, draft_event=outcome.draft_event,
+            event_embedding=TEST_EMBEDDING if outcome.draft_event else None,
+            embedding_model_version=TEST_EMBEDDING.model_version if outcome.draft_event else None,
+            embedding_model_digest=TEST_EMBEDDING.model_digest if outcome.draft_event else None)
         return conn
 
     def test_accepted_event_insert_satisfies_publication_contract(self):
@@ -185,7 +192,8 @@ class AutomaticPublicationTests(unittest.TestCase):
             certainty_label=None, source_display_name='X', source_url=draft.canonical_url,
             source_published_at=NOW, raw_text='PRIVATE SENTINEL', evidence_quote='PRIVATE SENTINEL',
             author='PRIVATE SENTINEL', source_snapshot_id=str(self.snapshot.snapshot_id),
-            result_metadata={'private': True})
+            result_metadata={'private': True}, embedding='PRIVATE SENTINEL',
+            model_version='PRIVATE SENTINEL', queue_state='PRIVATE SENTINEL')
         app = create_app()
         endpoint = next(r.endpoint for r in app.routes if r.path == '/api/v1/disruptions')
         with patch('mooby.api.app._synthetic_fixture_mode_enabled', return_value=False), \
@@ -199,19 +207,17 @@ class AutomaticPublicationTests(unittest.TestCase):
             'severity','event_time','event_time_certainty','freshness','certainty','source'})
         self.assertEqual(set(item['source']), {'display_name', 'url', 'published_at'})
         for private in ['PRIVATE SENTINEL', 'raw_text', 'evidence_quote', 'author',
-                        'source_snapshot_id', 'result_metadata']:
+                        'source_snapshot_id', 'result_metadata', 'embedding', 'model_version', 'queue_state']:
             self.assertNotIn(private, result.model_dump_json())
 
-    def test_optional_embedding_migration_and_access_blocker(self):
-        migration = (ROOT/'migrations/015_optional_event_embeddings.sql').read_text()
-        self.assertIn('ALTER COLUMN embedding DROP NOT NULL', migration)
-        self.assertIn('ALTER COLUMN embedding_input_version DROP NOT NULL', migration)
-        self.assertIn('(embedding IS NULL) = (embedding_input_version IS NULL)', migration)
-        self.assertNotRegex(migration, r'(?im)^\s*(GRANT|UPDATE|INSERT|CREATE ROLE)\b')
-        grants = (ROOT/'migrations/012_worker_draft_event_access.sql').read_text()
-        # Deployment is explicitly blocked by existing column-level permissions.
-        for column in ['verification_status', 'publication_status', 'verified_at', 'published_at']:
-            self.assertNotRegex(grants, rf'\b{column}\b')
+    def test_forward_migration_requires_embedding_and_minimal_column_grants(self):
+        migration = (ROOT/'migrations/016_required_event_embedding_publication.sql').read_text()
+        self.assertIn('ALTER COLUMN embedding SET NOT NULL', migration)
+        self.assertIn('ALTER COLUMN embedding_input_version SET NOT NULL', migration)
+        self.assertNotRegex(migration, r'(?im)^\s*(UPDATE|INSERT|CREATE ROLE)\b')
+        self.assertIn('embedding, embedding_input_version,', migration)
+        self.assertIn('verification_status, verified_at, publication_status, published_at', migration)
+        self.assertNotIn('GRANT INSERT ON', migration)
 
 
 if __name__ == '__main__':

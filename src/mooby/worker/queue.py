@@ -5,6 +5,7 @@ from uuid import uuid4
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
+from mooby.worker.embedding import EventEmbedding
 from mooby.worker.event_persistence import DraftEvent, persist_draft_event
 
 CLAIM_BATCH_SQL = """
@@ -153,6 +154,7 @@ def finish_attempt(
     reason_code: str | None = None,
     note_detail: dict[str, Any] | None = None,
     draft_event: DraftEvent | None = None,
+    event_embedding: EventEmbedding | None = None,
 ) -> str:
     """Finish a claimed attempt and publish only its accepted valid draft.
 
@@ -196,6 +198,13 @@ def finish_attempt(
 
     if note_type is not None and not (reason_code or "").strip():
         raise ValueError(f"{result_status} requires a reason_code")
+    if (draft_event is None) != (event_embedding is None):
+        raise ValueError("publication requires both accepted draft and embedding")
+    if event_embedding is not None:
+        event_embedding.validate()
+        if (embedding_model_version != event_embedding.model_version
+            or embedding_model_digest != event_embedding.model_digest):
+            raise ValueError("embedding provenance does not match processing run")
     if draft_event is not None:
         if result_status != "succeeded":
             raise ValueError("draft events may only be persisted for succeeded attempts")
@@ -286,7 +295,7 @@ def finish_attempt(
         )
 
         if draft_event is not None:
-            persist_draft_event(conn, draft=draft_event, run_id=run_id)
+            persist_draft_event(conn, draft=draft_event, run_id=run_id, embedding=event_embedding)
 
         if note_type is not None:
             conn.execute(

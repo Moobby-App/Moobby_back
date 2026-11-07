@@ -23,6 +23,7 @@ from mooby.db.source_reader import (
     load_confirmed_ordered_paths,
     load_station_catalog,
 )
+from mooby.worker.embedding import embed_event
 from mooby.worker.classifier import ClassifierAdapter, ModelArtifactError, ModelPrediction
 from mooby.worker.event_persistence import DraftEvent
 from mooby.worker.event_fields import (
@@ -47,7 +48,7 @@ KEYWORD_RULES_VERSION = "krl-keyword-prefilter-v1"
 LOCATION_RULES_VERSION = "explicit-lintas-pair-confirmed-path-v2"
 DRAFT_EVENT_RULES_VERSION = "single-station-or-explicit-confirmed-segment-draft-v2"
 NORMALIZATION_VERSION = "nfkc-casefold-whitespace-v1"
-PROCESSOR_CODE_VERSION = "classification-worker-slice-v7"
+PROCESSOR_CODE_VERSION = "classification-worker-slice-v8"
 INTAKE_WINDOW = timedelta(hours=1)
 KEYWORDS = (
     "gangguan",
@@ -898,6 +899,30 @@ def process_and_finish_attempt(
                 retry_after_seconds=transient_retry_after_seconds,
             )
 
+    event_embedding = None
+    if outcome.result_status == "succeeded" and outcome.draft_event is not None:
+        try:
+            event_embedding = embed_event(normalize_text(snapshot.raw_text))
+            event_embedding.validate()
+            outcome.result_metadata["embedding"] = {
+                "input_version": event_embedding.input_version,
+                "model_version": event_embedding.model_version,
+                "model_digest": event_embedding.model_digest,
+                "dimension": len(event_embedding.values),
+            }
+        except Exception as exc:
+            metadata = dict(outcome.result_metadata)
+            metadata["outcome"] = "error"
+            metadata["event_draft_persistence"] = {"status": "not_persisted"}
+            metadata["embedding"] = {"status": "unavailable", "error_type": type(exc).__name__}
+            outcome = ProcessingOutcome(
+                "error", result_metadata=metadata,
+                reason_code="transient_embedding_error",
+                note_detail={"stage": "event_embedding"},
+                retry_after_seconds=transient_retry_after_seconds,
+            )
+            event_embedding = None
+
     if outcome.result_status == "error" and outcome.retry_after_seconds is None:
         outcome = ProcessingOutcome(
             result_status=outcome.result_status,
@@ -925,6 +950,9 @@ def process_and_finish_attempt(
         # The two classifiers have different artifact digests; both exact
         # digests are stored under result_metadata.model_artifacts.
         classifier_model_digest=None,
+        embedding_model_version=event_embedding.model_version if event_embedding else None,
+        embedding_model_digest=event_embedding.model_digest if event_embedding else None,
+        event_embedding=event_embedding,
         result_metadata=outcome.result_metadata,
         reason_code=outcome.reason_code,
         note_detail=outcome.note_detail,

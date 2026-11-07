@@ -14,5 +14,8 @@ dependencies = [
     "uvicorn[standard]==0.54.0",
 ]
 
+[project.optional-dependencies]
+embedding = ["sentence-transformers==5.1.2"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
