@@ -188,40 +188,38 @@ def create_app() -> FastAPI:
             app_api_projection="available",
         )
 
-    @app.get("/api/v1/disruptions", response_model=DisruptionFeed)
-    def disruptions(
+    @app.get("/api/v1/mock/disruptions", response_model=DisruptionFeed)
+    def mock_disruptions(
         settings: Annotated[ApiSettings, Depends(_require_auth)],
         station_ids: Annotated[list[str], Query(min_length=1, max_length=30)],
         limit: Annotated[int, Query(ge=1, le=50)] = 20,
         offset: Annotated[int, Query(ge=0, le=1000)] = 0,
     ) -> DisruptionFeed | JSONResponse:
         if any(_STATION_ID.fullmatch(value) is None for value in station_ids):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"code": "invalid_station_id"},
-            )
+            raise HTTPException(status_code=422, detail={"code": "invalid_station_id"})
         try:
-            if _synthetic_fixture_mode_enabled():
-                page = synthetic_fixture_page(
-                    station_ids=station_ids,
-                    limit=limit,
-                    offset=offset,
-                )
-                items = [record.item for record in page.items[:limit]]
-                has_more = len(page.items) > limit
-                return DisruptionFeed(
-                    availability="results" if items else "no_match",
-                    generated_at=page.generated_at,
-                    message=(
-                        "SIMULASI: contoh sintetis, bukan laporan gangguan nyata."
-                        if items
-                        else "SIMULASI: tidak ada contoh yang cocok untuk rute ini."
-                    ),
-                    items=items,
-                    limit=limit,
-                    offset=offset,
-                    next_offset=offset + limit if has_more else None,
-                )
+            if not _synthetic_fixture_mode_enabled():
+                raise HTTPException(status_code=404, detail={"code": "mock_feed_disabled"})
+            page = synthetic_fixture_page(
+                station_ids=station_ids,
+                limit=limit,
+                offset=offset,
+            )
+            items = [record.item for record in page.items[:limit]]
+            has_more = len(page.items) > limit
+            return DisruptionFeed(
+                availability="results" if items else "no_match",
+                generated_at=page.generated_at,
+                message=(
+                    "SIMULASI: contoh sintetis, bukan laporan gangguan nyata."
+                    if items
+                    else "SIMULASI: tidak ada contoh yang cocok untuk rute ini."
+                ),
+                items=items,
+                limit=limit,
+                offset=offset,
+                next_offset=offset + limit if has_more else None,
+            )
         except (ApiUnavailable, SyntheticFixtureUnavailable) as exc:
             logger.warning("synthetic app_api feed unavailable (%s)", type(exc).__name__)
             return JSONResponse(
@@ -234,6 +232,19 @@ def create_app() -> FastAPI:
                     limit=limit,
                     offset=offset,
                 ).model_dump(mode="json"),
+            )
+
+    @app.get("/api/v1/disruptions", response_model=DisruptionFeed)
+    def disruptions(
+        settings: Annotated[ApiSettings, Depends(_require_auth)],
+        station_ids: Annotated[list[str], Query(min_length=1, max_length=30)],
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+        offset: Annotated[int, Query(ge=0, le=1000)] = 0,
+    ) -> DisruptionFeed | JSONResponse:
+        if any(_STATION_ID.fullmatch(value) is None for value in station_ids):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "invalid_station_id"},
             )
         try:
             page = fetch_disruptions(

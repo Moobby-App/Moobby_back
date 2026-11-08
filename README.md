@@ -93,28 +93,46 @@ Laporan hitungan disimpan di `evaluation/private/Scrape_Manual/synthetic_batch_r
 
 Untuk membuat contoh kartu UI, gunakan fixture/mock terpisah yang secara jelas diberi label **SIMULASI**. Jangan mengubah synthetic training text menjadi sumber collection atau mempublikasikannya sebagai laporan gangguan nyata.
 
-### Tampilkan fixture sintetis di app untuk uji singkat
+### Mock test bersamaan dengan feed normal
 
-Mode berikut mengalihkan endpoint feed Development ke hasil pemrosesan sintetis
-di memori. Item diberi awalan `SIMULASI` dan sumber `SIMULASI · dataset
-sintetis`; tidak ada perubahan database. Mode wajib diaktifkan dengan dua
-penanda Development dan berhenti otomatis setelah TTL saat proses API dimulai.
-TTL dibatasi 1–240 menit. Jika TTL atau konfigurasi salah, feed simulasi gagal
-tertutup.
+API yang sama pada port 8000 menyediakan dua endpoint dengan bearer token yang sama:
 
-Sebelum menjalankan API, tambahkan/ubah nilai lokal di `.env`:
+- `/api/v1/disruptions`: selalu feed normal dari database.
+- `/api/v1/mock/disruptions`: fixture sintetis di memori, hanya untuk Development.
 
-```dotenv
-APP_API_ENVIRONMENT=development
-APP_API_SYNTHETIC_FIXTURE_MODE=development
-APP_API_SYNTHETIC_FIXTURE_TTL_MINUTES=60
+Mock tidak mengganti feed normal, menjalankan worker, atau menulis data database.
+Item mock berlabel **SIMULASI**. Keduanya menggunakan `station_ids`, pagination,
+dan kontrak lokasi yang sama. App harus memilih path mock secara eksplisit untuk
+uji visual, bukan mencampurkan itemnya dengan laporan nyata.
+
+Untuk LaunchAgent yang sudah dikonfigurasi, tambahkan dua field berikut ke
+`ops/launchd/development-api.json` lokal, sambil mempertahankan project ref, domain,
+dan path ngrok yang sudah ada:
+
+```json
+"mock_enabled": true,
+"mock_ttl_minutes": 60
 ```
 
-Restart API setelah mengubah konfigurasi. URL ngrok yang sudah berjalan tetap
-meneruskan ke API lokal pada port 8000. Setelah uji selesai atau TTL habis,
-hentikan dan jalankan ulang API dengan `APP_API_SYNTHETIC_FIXTURE_MODE=disabled`.
-Mode ini hanya untuk pemeriksaan visual Development; hasilnya bukan event
-terverifikasi dan tidak boleh dipakai untuk menilai feed produksi.
+Field tersebut bagian dari objek JSON yang sudah ada, bukan file JSON lengkap.
+Default mock tetap nonaktif. TTL dibatasi 1–240 menit sejak proses API dimulai.
+Restart hanya API saat siap menerapkan perubahan; worker dan ngrok tidak perlu
+dihentikan. Untuk menonaktifkan mock, set `mock_enabled` menjadi `false` dan restart
+API. Saat nonaktif/TTL habis, endpoint mock mengembalikan 404; feed normal tetap
+membaca database.
+
+Path uji melalui domain yang sudah dikonfigurasi:
+
+```text
+https://capsule-favored-eclair.ngrok-free.dev/api/v1/mock/disruptions?station_ids=open-krl:SRP&station_ids=open-krl:THB
+```
+
+Tetap sertakan bearer token melalui header, bukan query string. Lihat
+[panduan API launchd](docs/development_api_launchd.md#mock-test-pada-port-dan-tunnel-yang-sama).
+Untuk API manual, tiga flag `APP_API_ENVIRONMENT=development`,
+`APP_API_SYNTHETIC_FIXTURE_MODE=development`, dan
+`APP_API_SYNTHETIC_FIXTURE_TTL_MINUTES=60` kini hanya mengaktifkan endpoint mock.
+Tidak ada lagi pengalihan otomatis endpoint feed normal ke simulasi.
 
 ## Kontrak dan batas saat ini
 

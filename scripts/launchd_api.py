@@ -32,7 +32,8 @@ def base_environment():
 
 def read_settings(path=CONFIG):
     value = json.loads(path.read_text())
-    if set(value) != {'expected_project_ref', 'ngrok_config_file', 'stable_domain'}:
+    required = {'expected_project_ref', 'ngrok_config_file', 'stable_domain'}
+    if not required <= set(value) or set(value) - required - {'mock_enabled', 'mock_ttl_minutes'}:
         raise ConfigurationBlocked('invalid_local_configuration')
     return value
 
@@ -60,6 +61,22 @@ def api_environment(settings, env_file=ROOT/'.env'):
         raise ConfigurationBlocked('invalid_api_bearer_configuration')
     env = base_environment()
     env.update(api)
+    enabled = settings.get('mock_enabled', False)
+    ttl = settings.get('mock_ttl_minutes', 60)
+    if type(enabled) is not bool or type(ttl) is not int or not 1 <= ttl <= 240:
+        raise ConfigurationBlocked('invalid_mock_configuration')
+    if enabled:
+        # Mock fixtures call the existing processor in this API process. Reuse
+        # saved NLP settings verbatim; never forward worker database credentials.
+        for key in ('MOOBY_RELEVANCE_THRESHOLD', 'MOOBY_SEVERITY_THRESHOLD',
+                    'MOOBY_TRUSTED_PUBLISHED_AT_BASES'):
+            if values.get(key) is not None:
+                env[key] = values[key]
+        # Explicit opt-in in the non-secret local config, never inherited .env flags.
+        # These settings gate only /api/v1/mock/disruptions, never the real feed.
+        env.update(APP_API_ENVIRONMENT='development',
+                   APP_API_SYNTHETIC_FIXTURE_MODE='development',
+                   APP_API_SYNTHETIC_FIXTURE_TTL_MINUTES=str(ttl))
     env['PYTHONDONTWRITEBYTECODE'] = '1'
     return env
 

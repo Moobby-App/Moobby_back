@@ -42,6 +42,28 @@ class ApiLaunchdTests(unittest.TestCase):
                 with self.assertRaises(launchd_api.ConfigurationBlocked):
                     launchd_api.api_environment({'expected_project_ref':REF}, envfile)
 
+    def test_mock_opt_in_is_explicit_local_json_with_bounded_ttl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            envfile = Path(tmp)/'.env'
+            envfile.write_text(f'APP_API_DATABASE_URL={URL}\nAPP_API_BEARER_TOKEN={TOKEN}\n')
+            envfile.write_text(envfile.read_text()+'MOOBY_RELEVANCE_THRESHOLD=0.8\n'
+                'MOOBY_SEVERITY_THRESHOLD=0.7\nMOOBY_TRUSTED_PUBLISHED_AT_BASES=page_timestamp\n'
+                'WORKER_DATABASE_URL=PRIVATE_WORKER\n')
+            settings = {'expected_project_ref':REF, 'mock_enabled':True, 'mock_ttl_minutes':60}
+            env = launchd_api.api_environment(settings, envfile)
+            self.assertEqual(env['MOOBY_RELEVANCE_THRESHOLD'], '0.8')
+            self.assertEqual(env['MOOBY_SEVERITY_THRESHOLD'], '0.7')
+            self.assertEqual(env['MOOBY_TRUSTED_PUBLISHED_AT_BASES'], 'page_timestamp')
+            self.assertNotIn('WORKER_DATABASE_URL', env)
+            disabled = launchd_api.api_environment({'expected_project_ref':REF}, envfile)
+            self.assertNotIn('MOOBY_RELEVANCE_THRESHOLD', disabled)
+            self.assertEqual(env['APP_API_ENVIRONMENT'], 'development')
+            self.assertEqual(env['APP_API_SYNTHETIC_FIXTURE_MODE'], 'development')
+            self.assertEqual(env['APP_API_SYNTHETIC_FIXTURE_TTL_MINUTES'], '60')
+            for extra in [{'mock_enabled':'true'}, {'mock_ttl_minutes':0}, {'mock_ttl_minutes':241}]:
+                with self.assertRaises(launchd_api.ConfigurationBlocked):
+                    launchd_api.api_environment({**settings, **extra}, envfile)
+
     def test_api_command_binds_localhost_and_has_no_credentials(self):
         command = launchd_api.service_command('api', {})
         self.assertIn('mooby.api.app:app', command)

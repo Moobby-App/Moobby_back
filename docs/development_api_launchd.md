@@ -44,6 +44,8 @@ Copy `ops/launchd/development-api.json.example` to ignored
 - The independently reviewed expected Development Supabase project ref.
 - Path to the existing private ngrok config file (no credentials copied).
 - Optional already confirmed stable public hostname, otherwise null.
+- Optional `mock_enabled` (boolean, default false) and `mock_ttl_minutes` (integer
+  1–240, default 60), controlling only the dedicated mock endpoint.
 
 Never put a database URL, bearer token, authtoken or API key in JSON/plist files.
 
@@ -57,8 +59,9 @@ Supabase pooler hostname. The expected ref must be supplied independently; no co
 can infer which project is Development from a naming convention alone.
 
 Other API `.env` options, including synthetic-fixture flags and timeout overrides,
-are intentionally not forwarded. Existing API defaults apply (normal feed, default
-timeouts). This setup does not change `.env`, token values, or application behavior.
+are intentionally not forwarded. Optional mock activation comes only from the
+local JSON fields described below. The normal feed always reads the database;
+existing default timeouts apply. This setup does not change `.env`, token values, or application behavior.
 The bearer token must meet the API's existing minimum 32-character requirement.
 
 The child commands reuse the current configuration/commands:
@@ -212,3 +215,52 @@ SQL, API, ngrok, worker, service installation/loading, migration or permission
 operation was performed during preparation. Current blockers are the unconfigured
 stable domain and the owner-supplied local project/config readiness; actual database
 and ngrok account readiness remain unverified.
+
+## Mock test pada port dan tunnel yang sama
+
+The service now supports `/api/v1/disruptions` (always real database feed) and
+`/api/v1/mock/disruptions` (Development-only fixtures) concurrently in one process,
+on port 8000 with the existing ngrok domain. No worker or tunnel needs to stop.
+
+In the existing ignored `ops/launchd/development-api.json`, add/update only:
+
+```json
+"mock_enabled": true,
+"mock_ttl_minutes": 60
+```
+
+Keep the existing project ref, stable domain and ngrok config path. These are
+members of the existing JSON object, not a replacement file. Mock is false when
+omitted; TTL must be an integer in 1–240. The supervisor sets the three existing
+Development fixture environment flags only when explicitly enabled. It also
+forwards the existing `MOOBY_RELEVANCE_THRESHOLD`, `MOOBY_SEVERITY_THRESHOLD` and
+`MOOBY_TRUSTED_PUBLISHED_AT_BASES` from `.env` for in-memory fixture processing,
+without changing their values or forwarding worker database credentials. The
+fixture processor retains its original behavior. Those flags
+now gate the mock endpoint alone; they cannot redirect the normal endpoint.
+
+When you choose to deploy changed code/config, restart only the already loaded API:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/dev.mooby.api"
+```
+
+Use bootstrap instead only if the job is unloaded, per the lifecycle section.
+The API restart briefly interrupts HTTP handling, but the worker continues polling
+and persisting normally. Subsequent normal and mock requests coexist; no continuing
+service switch is needed. Do not bootout the normal API or launch a second Uvicorn
+on port 8000.
+
+Send bearer-authenticated requests to the mock path explicitly, for example:
+
+```text
+https://capsule-favored-eclair.ngrok-free.dev/api/v1/mock/disruptions?station_ids=open-krl:SRP&station_ids=open-krl:THB
+```
+
+Use the same token as the normal API, in the header only. Keep normal app requests
+on `/api/v1/disruptions`; a separate mock UI/test selection must use the mock path.
+This change does not automatically alter the iOS app. Expired/disabled mock returns
+404, invalid configuration/fixture errors return 503, and mock never substitutes
+for normal data. Disable via `mock_enabled: false` plus an API restart.
+
+No service is restarted by this code change or its local tests.

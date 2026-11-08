@@ -1,5 +1,7 @@
 {
   "expected_project_ref": "REPLACE_WITH_DEVELOPMENT_PROJECT_REF",
   "ngrok_config_file": "~/Library/Application Support/ngrok/ngrok.yml",
-  "stable_domain": null
+  "stable_domain": null,
+  "mock_enabled": false,
+  "mock_ttl_minutes": 60
 }
