@@ -84,7 +84,7 @@ def persist_draft_event(
             processing_run_id, event_kind, line_id, station_id,
             start_station_id, end_station_id, direction, path_id, path_version,
             event_at, event_time_raw_phrase, event_time_method,
-            event_time_certainty, severity, title, summary,
+            event_time_certainty, severity, title, summary, original_text,
             verification_status, publication_status, verified_at, published_at,
             embedding, embedding_input_version
         )
@@ -93,7 +93,7 @@ def persist_draft_event(
             %s, %s, %s,
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
-            %s, %s, %s,
+            %s, %s, %s, %s,
             'verified', 'published', transaction_timestamp(), transaction_timestamp(),
             %s, %s
         )
@@ -119,6 +119,7 @@ def persist_draft_event(
             draft.severity,
             draft.title,
             draft.summary,
+            draft.raw_text,
             embedding.pgvector(),
             embedding.input_version,
         ),

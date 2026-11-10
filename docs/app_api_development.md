@@ -58,7 +58,7 @@ Example response shape (synthetic values):
 
 ## Eligibility and data boundary
 
-Migration `014_app_api_read_contract.sql` adds nullable, constrained `event_versions.severity` and creates a latest-version projection. The view returns only the latest event version when it is `verified` and `published`, and only while the database-clock freshness anchor is within the preceding 24 hours. Freshness is `fresh` through 8 hours and `stale` after 8 through 24 hours. It projects curated event fields, canonical location names and IDs, confirmed-path affected station IDs, platform-level source display name, HTTPS source URL, and source publication time. It excludes source text, exact quotes, author data, source snapshot IDs, model output, internal notes, path IDs, and queue data.
+Migration `014_app_api_read_contract.sql` adds nullable, constrained `event_versions.severity` and creates a latest-version projection. The view returns only the latest event version when it is `verified` and `published`, and only while the database-clock freshness anchor is within the preceding 24 hours. Freshness is `fresh` through 8 hours and `stale` after 8 through 24 hours. It projects curated event fields, canonical location names and IDs, confirmed-path affected station IDs, platform-level source display name, HTTPS source URL, and source publication time. Migration 018 extends this projection with approved nullable `original_text`. Internal quote fields/offsets, separate author metadata, snapshot IDs, model output, notes, path IDs and queue data remain excluded.
 
 The API login should use `mooby_app_api_login_dev`, whose only application data access is through `mooby_app_api_gateway_dev` and the single view. Set that login password out of band in Development and store its URL in the server-only `APP_API_DATABASE_URL`. Never reuse the worker or migration URL. The role setup assumes the existing `moobby_incident_readonly` role; stop if that prerequisite is absent. Migration 014 has not been applied by this code change.
 
@@ -119,15 +119,15 @@ Exact repository query stages:
 | Database readiness | `SELECT transaction_timestamp()` |
 | Projection readiness | `SELECT public_event_id FROM app_api.published_disruptions LIMIT 1` |
 | Feed timestamp | `SELECT transaction_timestamp() AS generated_at`, then fetch `generated_at` |
-| Feed rows | `_SEARCH_SQL`: the 21 view fields listed below plus computed freshness; affected-station array overlap, deterministic ordering, limit+1/offset |
+| Feed rows | `_SEARCH_SQL`: the 22 view fields listed below plus computed freshness; affected-station array overlap, deterministic ordering, limit+1/offset |
 | Feed response | `_item()` validates/maps selected rows to the typed response; empty rows become `no_match` |
 
-The 21 referenced view columns are `public_event_id`, `event_kind`, `title`,
-`summary`, `severity`, `event_at`, `event_time_certainty`, `certainty_label`,
+The 22 referenced view columns are `public_event_id`, `event_kind`, `title`,
+`summary`, `original_text`, `severity`, `event_at`, `event_time_certainty`, `certainty_label`,
 `freshness_anchor_at`, `line_name`, `station_name`, `station_id`,
 `start_station_name`, `start_station_id`, `end_station_name`, `end_station_id`,
 `direction`, `affected_station_ids`, `source_display_name`, `source_url`, and
-`source_published_at`. Migration 014 projects each of them. Freshness is computed
+`source_published_at`. Migration 014 defines the initial fields; forward migration 018 appends `original_text`. Freshness is computed
 in the repository by comparing the anchor against `transaction_timestamp()` minus
 8 hours. The request predicate is `v.affected_station_ids && %s::text[]`; ordering
 is `v.freshness_anchor_at DESC, v.public_event_id`; pagination is `LIMIT %s OFFSET
@@ -135,8 +135,8 @@ is `v.freshness_anchor_at DESC, v.public_event_id`; pagination is `LIMIT %s OFFS
 
 The view itself selects the latest event version, requires verified/published,
 applies the database-clock 24-hour window, and validates confirmed segment paths.
-Its affected-station IDs are arrays built from text IDs. No static column/type
-mismatch was found between migration 014 and the repository query. This does not
+Its affected-station IDs are arrays built from text IDs. The current repository query expects the view after migration 018; before this
+extension, migration 014 matched the original repository query. This does not
 establish that the deployed view equals that migration, or that a manual count
 used the same startup options, timeouts, process environment, or query plan.
 
@@ -224,3 +224,52 @@ Mock fixtures require the saved NLP thresholds and trusted publication-basis
 settings. The LaunchAgent forwards these three non-secret processor settings only
 when mock is enabled, without forwarding worker connection credentials. The
 fixture processor retains its original behavior.
+
+## Original source text
+
+Every item now includes `original_text: string | null`, alongside curated `title`
+and `summary`. This explicitly approved field contains the unmodified posting
+text, including original whitespace, not reconstructed text from the evidence.
+It applies to both `/api/v1/disruptions` and `/api/v1/mock/disruptions`; mock uses
+the same synthetic input and SIMULASI labels. No CSV/model/threshold changes.
+
+```json
+{
+  "title": "Gangguan layanan KRL di Bogor",
+  "summary": "Laporan gangguan layanan KRL menyebut Stasiun Bogor.",
+  "original_text": "CONTOH SINTETIS: KRL tertahan di Stasiun Bogor karena gangguan sinyal."
+}
+```
+
+Migration `018_app_api_original_text.sql` is prepared, NOT applied. It adds nullable
+`nlp.event_versions.original_text`, grants INSERT on that column to the existing
+worker and SELECT to the existing view owner, then appends the field to the existing
+security-barrier view. Development inspection reported a membership granted by
+`supabase_admin` to `postgres` with ADMIN true, INHERIT false and SET false.
+Membership alone cannot authorize SET ROLE. Migration 018 uses that existing ADMIN
+option to add a separate temporary membership explicitly `GRANTED BY postgres`,
+with INHERIT false, SET true and ADMIN false. After replacing the view, it revokes
+only that grant, explicitly `GRANTED BY postgres RESTRICT`, preserving the original
+supabase_admin grant and its options. Both statements are in the same transaction;
+any failure rolls them back with the DDL. A preflight requires the postgres session,
+the existing direct ADMIN option, and no pre-existing postgres-granted membership;
+otherwise it stops instead of overwriting/removing an unrelated grant. It still
+requires permission to assume the NLP owner. No permanent membership, collection access, data,
+RLS, existing API-role privileges or eligibility filters are changed. Existing
+view SELECT access covers the appended field. No direct collection query is added.
+
+The worker writes the exact draft text atomically with event/embedding/provenance/
+evidence for new accepted versions only. Legacy events retain null; no automatic
+backfill or promotion occurs. A missing legacy field in an adapter row also maps
+to null. Internal evidence fields/offsets, normalized text, separate author
+metadata, embeddings, model metadata and queue state are not exposed. Full original
+text may naturally contain names/mentions or the same words as an internal quote.
+Do not print original_text to operational logs or render it as executable markup.
+
+Deployment order is manual: apply migration 018 in the intended Development
+project using the established owner/migration process, then restart the API and
+worker to pick up the changed code when authorized. New API SQL/worker INSERTs
+require that migration; deploying them first can produce database column errors.
+Older worker code remains compatible after the migration (its new text column is
+null). Do not infer the migration has run merely because this file exists.
+This implementation does not apply SQL, connect to a database, or restart services.

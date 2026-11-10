@@ -106,6 +106,7 @@ class AutomaticPublicationTests(unittest.TestCase):
         conn = self.finish(outcome)
         sql, params = next(c for c in conn.calls if 'INSERT INTO nlp.event_versions' in c[0])
         self.assertEqual(sql.count('%s'), len(params))
+        self.assertEqual(params[-3], outcome.draft_event.raw_text)
         normalized = ' '.join(sql.split())
         self.assertIn('verification_status, publication_status, verified_at, published_at', normalized)
         self.assertIn("'verified', 'published', transaction_timestamp(), transaction_timestamp()", normalized)
@@ -186,7 +187,7 @@ class AutomaticPublicationTests(unittest.TestCase):
         # Exercise the actual endpoint/serialization with a mocked projection row.
         draft = self.process().draft_event
         row = dict(public_event_id=draft.event_id, event_kind='station', title=draft.title,
-            summary=draft.summary, severity='light', station_name='Bogor',
+            summary=draft.summary, original_text=draft.raw_text, severity='light', station_name='Bogor',
             station_id='open-krl:BOO', affected_station_ids=['open-krl:BOO'],
             event_at=None, event_time_certainty='unknown', freshness='fresh',
             certainty_label=None, source_display_name='X', source_url=draft.canonical_url,
@@ -204,7 +205,8 @@ class AutomaticPublicationTests(unittest.TestCase):
         item = payload['items'][0]
         self.assertEqual(item['station_or_segment']['affected_station_ids'], ['open-krl:BOO'])
         self.assertEqual(set(item), {'public_event_id','title','summary','station_or_segment',
-            'severity','event_time','event_time_certainty','freshness','certainty','source'})
+            'severity','event_time','event_time_certainty','freshness','certainty','source','original_text'})
+        self.assertEqual(item['original_text'], draft.raw_text)
         self.assertEqual(set(item['source']), {'display_name', 'url', 'published_at'})
         for private in ['PRIVATE SENTINEL', 'raw_text', 'evidence_quote', 'author',
                         'source_snapshot_id', 'result_metadata', 'embedding', 'model_version', 'queue_state']:

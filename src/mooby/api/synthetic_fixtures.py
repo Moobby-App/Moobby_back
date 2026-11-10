@@ -131,6 +131,7 @@ def _item_from_draft(
             public_event_id=draft.event_id,
             title=f"SIMULASI — {draft.title}",
             summary=draft.summary,
+            original_text=draft.raw_text,
             station_or_segment=location,
             severity=draft.severity,
             event_time=draft.event_at,

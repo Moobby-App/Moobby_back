@@ -70,7 +70,7 @@ iOS application
 
 `collection` is private source input. `nlp` is the trusted processing and event layer. `app_api` is the narrow app-facing read contract. The gateway is the only app-facing database client and uses a read-only database role. Database role credentials are held server-side, never in the iOS bundle.
 
-The API may read trusted `nlp` data internally only where required by an approved query implementation. The app-facing contract remains `app_api`; raw source text, author data, and private collection fields must never be returned to the app. Event verification/publication is fully automated: `verified` means machine checks passed, not that an operator or official source independently confirmed the report.
+The API may read trusted `nlp` data internally only where required by an approved query implementation. The app-facing contract remains `app_api`; only the explicitly approved nullable `original_text` copy may expose source text; separate author metadata and other private collection fields remain excluded. Event verification/publication is fully automated: `verified` means machine checks passed, not that an operator or official source independently confirmed the report.
 
 ## 5. Technology baseline
 
@@ -109,7 +109,7 @@ Dependency versions and model artifacts must be pinned in deployment manifests/l
 | `nlp` (new) | Processing queue/runs, structured event versions, embeddings, station/segment matches, internal exact evidence quotes, verification/publication state, skip/error notes, model version and digest | Batch worker | Worker and trusted API implementation | Internal trusted schema; not directly granted to iOS |
 | `app_api` (new) | Views/RPCs containing only app-visible fields and only eligible published events | No direct application/API writes | Gateway/API using read-only login | Sole app-facing database contract |
 
-The `app_api` contract should contain only the fields required by the application: title, curated summary/conclusion, affected station or segment, time, certainty, severity when available, and a `source` object (for example, display name, URL, and publication time). Incident category is outside the initial classifier scope and should be omitted unless supplied by a deterministic rule or separately approved later. The API must not return the exact evidence quote or raw post text. Add a stable public event identifier only if the app needs it for identity or pagination; do not expose internal source IDs or private metadata without a documented need.
+The `app_api` contract should contain only the fields required by the application: title, curated summary/conclusion, affected station or segment, time, certainty, severity when available, and a `source` object (for example, display name, URL, and publication time). Incident category is outside the initial classifier scope and should be omitted unless supplied by a deterministic rule or separately approved later. The API may return unmodified source text in `original_text` for eligible events; it must not expose the internal `evidence_quote` field or its offsets. Add a stable public event identifier only if the app needs it for identity or pagination; do not expose internal source IDs or private metadata without a documented need.
 
 ### 6.2 Logical data entities
 
@@ -131,6 +131,27 @@ Exact table names may be selected during migration design, but the implementatio
 - **Correlation/deduplication membership:** event-cluster identity, related event versions, applied deterministic rules, and the embedding candidate score for audit. The score is evidence for candidate generation only.
 
 Use database constraints for required identifiers and uniqueness. A new processing version must be appended or linked as a new version; it must not silently overwrite an older result. Every time-gate and keyword-gate skip must be recorded with its rule version and reason. A current/published pointer or equivalent may identify the active version without deleting history.
+
+### 6.2.1 Approved original source text in the API
+
+The product now explicitly permits `original_text: string | null` on each item in
+both normal and mock feeds. For new accepted events, the worker copies the exact
+`DraftEvent.raw_text` into nullable `nlp.event_versions.original_text` in the same
+atomic INSERT as the event, embedding, provenance and evidence. Preserve bytes as
+Unicode text including whitespace; do not normalize, summarize, redact or rebuild
+it from the evidence quote. `title`/`summary` remain curated separate fields.
+
+Forward migration 018 adds only that nullable column, narrow INSERT/SELECT column
+permissions, and appends it to the existing app_api view without changing original
+column order, eligibility, 24-hour filters, or affected station IDs. Gateway access
+remains through the existing view; no collection grants, joins, reads or changes
+are added. Legacy versions return null; no automatic backfill, reprocessing or
+promotion is authorized by this feature. The mock endpoint copies its existing
+synthetic input text only, keeping its SIMULASI labels and in-memory behavior.
+Logs must still exclude source text. Treat original_text as display text, not HTML
+or instructions. Internal evidence quotes/offsets and separate author metadata
+remain outside the contract even though full source text can contain identical
+passages or mentions. No model, threshold, station logic or publication rule changes.
 
 ### 6.3 Reference-data requirements
 
@@ -202,7 +223,7 @@ The required embedding provider is local-only `sentence-transformers` with the p
 ### 7.4 Evidence and output integrity
 
 - Every internal evidence quote must be an exact substring of the original source text stored in `collection` (or an exact copied immutable field in `nlp`).
-- Do not derive internal quotes from normalized text, translation, model rewrites, or summaries. Validate exact substring equality before publication. Quotes are internal audit evidence and a publication prerequisite; they are never displayed in the app response.
+- Do not derive internal quotes from normalized text, translation, model rewrites, or summaries. Validate exact substring equality before publication. Internal quote fields are audit evidence and a publication prerequisite; they are not exposed separately. Their characters can naturally occur inside the explicitly approved full `original_text`.
 - Initial deterministic quote selection uses an unchanged sentence slice from `raw_text` containing both a versioned disruption keyword match and at least one uniquely resolved canonical station name or approved alias. Validate the selected slice against the original text. If no sentence or more than one sentence qualifies, leave quote resolution unresolved and block event readiness rather than guessing. Until an event-evidence writer exists, processing metadata may store only quote validation status, character count, and digest; never store the quote text there.
 - Summaries and conclusions are composed from structured fields through templates and must not copy source-post text. Optional LLM rewriting may receive structured fields only, must return the declared JSON schema, and must pass deterministic validation without reproducing source wording.
 - If optional LLM output is malformed, unsupported, or adds facts, reject the rewrite and use the deterministic template or return a controlled error. Do not label that a policy rejection unless it is actually a policy decision.
@@ -296,7 +317,7 @@ Use a top-level availability state to distinguish:
 - `no_match`: the source is reachable and the query completed, but no eligible event matches. The response must not say or imply that service is normal.
 - `source_unavailable`: the database/feed/API dependency is unavailable or cannot provide a trustworthy result. Do not convert dependency failures into an empty successful result.
 
-A response should include freshness and certainty for each result and a `source` object for each curated conclusion. It must not include `evidence_quote` or raw post text. Error details returned to the app must not expose credentials, SQL, raw private metadata, or internal stack traces.
+A response should include freshness and certainty for each result and a `source` object for each curated conclusion. It may include the approved nullable `original_text` field, but not the internal `evidence_quote` field or quote offsets. Error details returned to the app must not expose credentials, SQL, raw private metadata, or internal stack traces.
 
 ### 11.2 Path A — GPS, route, or station lookup
 
@@ -314,7 +335,7 @@ A response should include freshness and certainty for each result and a `source`
 3. Compute query embedding using `fastembed` or ONNX Runtime with the exact compatible `multilingual-e5-small` version used for stored vectors.
 4. Apply station constraints if one was resolved. Apply the mandatory database-time 24-hour window even if no station or time was resolved. Apply publication and verification constraints.
 5. Run pgvector similarity only over the filtered eligible subset; then apply a versioned ranking strategy.
-6. Return only `app_api`-approved fields and source objects; never return the raw text or internal exact quote.
+6. Return only `app_api`-approved fields and source objects; return source text only through approved `original_text`, never through internal quote fields.
 
 A mismatch between event-vector and query-vector model versions must fail closed or use a separately versioned compatible index; it must not silently compare incompatible vectors.
 
@@ -328,7 +349,7 @@ The first app integration is the route-scoped disruption feed on the Home tab. P
 
 The first gateway slice implements **Path A only** using canonical reference `station_id` values supplied for the selected route. Path B remains unavailable until compatible query embeddings and filtered vector retrieval are implemented and reviewed. A route with no supported station-ID mapping must not be silently mapped from display names or array positions.
 
-The initial read contract is `GET /api/v1/disruptions` with one or more bounded `station_id` query parameters plus bounded `limit` and `offset`. It returns an envelope with `availability`, database-derived `generated_at`, and `items`. `results` has one or more items; `no_match` has an empty item list and means only that no eligible matching report was found in the 24-hour search window; dependency/configuration failures use `source_unavailable` and a non-success HTTP status. Each item has a stable public event ID, curated `title` and `summary`, a station-or-segment object with canonical display names and known direction/path fields, nullable `severity`, nullable event time/certainty, `freshness` (`fresh` or `stale`), and an approved source object (`display_name`, HTTPS URL, and source publication time). The contract omits incident `category` while its taxonomy is undefined. It never returns source snapshot IDs, raw or normalized source text, exact evidence quotes, author data, internal notes, model details, or queue state.
+The initial read contract is `GET /api/v1/disruptions` with one or more bounded `station_id` query parameters plus bounded `limit` and `offset`. It returns an envelope with `availability`, database-derived `generated_at`, and `items`. `results` has one or more items; `no_match` has an empty item list and means only that no eligible matching report was found in the 24-hour search window; dependency/configuration failures use `source_unavailable` and a non-success HTTP status. Each item has a stable public event ID, curated `title` and `summary`, a station-or-segment object with canonical display names and known direction/path fields, nullable `severity`, nullable event time/certainty, `freshness` (`fresh` or `stale`), and an approved source object (`display_name`, HTTPS URL, and source publication time). The contract omits incident `category` while its taxonomy is undefined. It also includes nullable `original_text` as explicitly approved unmodified source text. It never returns source snapshot IDs, normalized source text, internal evidence fields/offsets, separate author metadata, internal notes, model details, or queue state.
 
 Path A matches a selected route when its station IDs intersect the event's station or resolved ordered segment range. The server applies publication/verification eligibility and the 24-hour database-clock window before returning data, computes freshness using the §10.2 event-time-or-first-seen anchor policy, and caps results and pagination. Unknown event time, severity, certainty, direction, or path remains null/unknown in the response; do not substitute source publication time for event time or draw a precise timeline range for unresolved location.
 
@@ -349,7 +370,7 @@ The default answer is produced by deterministic Python templates using structure
 
 The system must distinguish:
 
-1. **Results found:** display the curated conclusion, approved source object, and freshness. Keep source text and exact internal quotes hidden.
+1. **Results found:** display the curated conclusion, approved source object, and freshness. Show approved `original_text` separately as plain source text when available; keep internal quote fields/offsets hidden.
 2. **No matching results:** explicitly say that no matching report was found in the searched window. Do not say “normal,” “no disruption,” or equivalent.
 3. **Source unavailable:** report that data could not be checked. Do not represent an outage as an empty search result.
 
@@ -359,10 +380,10 @@ The optional Ollama `qwen2.5:7b-instruct` path is strictly a constrained phrasin
 
 `app_api` consists only of views and/or RPCs designed for the app. They must:
 
-- Return only approved display columns: stable public event ID, title, curated summary/conclusion, station or affected segment, severity when available, event time, certainty, freshness, and a `source` object (publisher/display name, URL, and publication time as approved). Omit incident category until its taxonomy is defined. Do not return `evidence_quote`, original post text, or normalized post text.
+- Return only approved display columns: stable public event ID, title, curated summary/conclusion, station or affected segment, severity when available, event time, certainty, freshness, and a `source` object (publisher/display name, URL, and publication time as approved). Omit incident category until its taxonomy is defined. Return original post text only in approved `original_text`; do not return `evidence_quote`, quote offsets, or normalized post text.
 - Include only events whose current version is eligible for publication and passes current request-time filters.
 - Enforce the mandatory 24-hour boundary and freshness calculation using database time.
-- Hide source author, raw post payload, normalized text, internal evidence quote, internal notes, model prompts, queue state, embeddings, and private IDs.
+- Hide separate source-author metadata, other raw-payload fields, normalized text, internal evidence fields/offsets, notes, prompts, queue state, embeddings, and private IDs. The approved `original_text` itself may contain names or mentions present in the source; it is not redacted or normalized.
 - Expose bounded query parameters, result limits, and safe pagination. Reject invalid coordinates, oversized text, unsupported time ranges, and malformed requests.
 - Use read-only access. The gateway/API cannot mutate `collection`, `nlp`, or published event state through the app-facing role.
 - Ensure no iOS client has a database URL, password, service-role key, or direct Supabase database credential.
@@ -464,7 +485,7 @@ Automated tests should include:
 - Alias/canonical station matching, fuzzy suggestion non-acceptance, and unmapped outcomes.
 - Route expansion over ordered path variants, including branches, alternative corridors, short-turn services, and skip-stop trip patterns.
 - Time parser examples (`08.15`, `tadi pagi`, `barusan`), relative-time anchoring to source publication time in Asia/Jakarta, ambiguity, timezone handling, and database-clock boundaries.
-- Normalized processing copy versus immutable original, internal exact-quote validation, and proof that app responses never include the quote.
+- Normalized processing copy versus immutable original, internal exact-quote validation, and proof that app responses expose only approved `original_text`, not internal quote fields/offsets.
 - Curated summaries composed from structured fields without copying source-post wording.
 - Segment events with line, endpoints, direction, and ordered path-variant expansion, including ambiguous endpoints and branch-specific behavior.
 - Classifier adapter output validation and malformed-versus-policy-rejected handling.
@@ -533,7 +554,7 @@ Secrets and environment-specific URLs must not be stored in the repository. Chan
 The implementation is acceptable when all of the following are demonstrated:
 
 - Existing news is read from `collection`; no second collector is introduced for the same data.
-- Original text is immutable and every internal evidence quote validates against it exactly before publication; no exact quote or raw post text is returned to the app.
+- Original text is immutable and every internal evidence quote validates against it exactly before publication; the approved unmodified text may be returned as `original_text`, while internal evidence fields/offsets remain private.
 - Normalized text is a derived copy used only for classification/extraction/embedding, never as the evidence source.
 - Relative time expressions are resolved from source post publication time in Asia/Jakarta, not worker processing time.
 - A snapshot can be retried safely; outputs are versioned and old versions remain auditable.
@@ -549,7 +570,7 @@ The implementation is acceptable when all of the following are demonstrated:
 - GPS/route lookups use structured SQL; free-text uses pgvector with station/time filters applied before similarity where available and a mandatory 24-hour DB-time bound always present.
 - Freshness is computed from the database clock: fresh through 8 hours, stale after 8 and through 24, expired after 24.
 - Empty matches do not imply normal service; source unavailability is a different response state.
-- The app reads only through the FastAPI gateway/NGROK path and `app_api`; it contains no database credentials and cannot access `collection` or raw `nlp` tables. `app_api` returns a curated conclusion and source object, not source-post text or `evidence_quote`.
+- The app reads only through the FastAPI gateway/NGROK path and `app_api`; it contains no database credentials and cannot access `collection` or raw `nlp` tables. `app_api` returns a curated conclusion and source object, plus the approved nullable `original_text` copy, but never the internal `evidence_quote` field.
 - The initial relevance/severity baseline can train from the current labeled corpus with exact duplicates kept together; its report states that it is exploratory and does not claim time/content-group generalization. Time/content-group splits and several hundred diverse examples are targets for mature evaluation, not blockers for initial training.
 - Development migrations run only in the Supabase development database containing `collection`. They do not alter `collection` objects, data, roles, grants, or ownership, and are never applied to live during this implementation phase. Any later live rollout requires a separately reviewed plan and new schema-scoped roles/objects while preserving every existing `collection` role and object owner.
 - The labeled evaluation set and pytest suite cover station matching, time parsing, output validation, adapter behavior, idempotency, API boundaries, and both retrieval paths. Initial model metrics are reported as exploratory until time/content-group evaluation data is available.

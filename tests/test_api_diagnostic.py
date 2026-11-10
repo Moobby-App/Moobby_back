@@ -91,13 +91,13 @@ class ApiDiagnosticTests(unittest.TestCase):
 
     def test_query_view_columns_match_migration_contract(self):
         import re
-        expected = {'public_event_id','event_kind','title','summary','severity','event_at',
+        expected = {'public_event_id','event_kind','title','summary','original_text','severity','event_at',
                     'event_time_certainty','certainty_label','freshness_anchor_at','line_name',
                     'station_name','station_id','start_station_name','start_station_id',
                     'end_station_name','end_station_id','direction','affected_station_ids',
                     'source_display_name','source_url','source_published_at'}
         self.assertEqual(set(re.findall(r'\bv\.(\w+)', _SEARCH_SQL)), expected)
-        view = (Path(__file__).resolve().parents[1]/'migrations/014_app_api_read_contract.sql').read_text()
+        view = (Path(__file__).resolve().parents[1]/'migrations/018_app_api_original_text.sql').read_text()
         for column in expected:
             self.assertRegex(view, rf'\b{column}\b')
         self.assertIn('WHERE v.affected_station_ids && %s::text[]', _SEARCH_SQL)

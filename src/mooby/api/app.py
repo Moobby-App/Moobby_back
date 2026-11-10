@@ -117,6 +117,7 @@ def _item(row: dict[str, object]) -> DisruptionItem:
         public_event_id=row["public_event_id"],
         title=row["title"],
         summary=row["summary"],
+        original_text=row.get("original_text"),
         station_or_segment=location,
         severity=row["severity"],
         event_time=row["event_at"],

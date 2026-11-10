@@ -59,6 +59,7 @@ class DisruptionItem(BaseModel):
     public_event_id: UUID
     title: str
     summary: str
+    original_text: str | None = None
     station_or_segment: StationOrSegment
     severity: Severity | None = None
     event_time: datetime | None = None

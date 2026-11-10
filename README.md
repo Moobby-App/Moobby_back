@@ -139,7 +139,7 @@ Tidak ada lagi pengalihan otomatis endpoint feed normal ke simulasi.
 - App memanggil FastAPI melalui gateway; app tidak memakai koneksi PostgreSQL.
 - API membaca `app_api.published_disruptions` menggunakan login read-only.
 - Feed normal hanya memuat event `verified` + `published` yang masih berada dalam jendela 24 jam. Hasil processor baru dengan `result_status=succeeded` dan draft valid setelah embedding wajib berhasil disimpan atomik sebagai `verified`/`published`, tanpa review manusia, verifier terpisah, atau menunggu korelasi. `verified` berarti diterima mesin, bukan konfirmasi resmi. Status queue sukses saja tidak cukup; skip/error/non-disruption/tanpa draft valid tidak dipublikasikan. Draft lama tidak dipromosikan.
-- Respons tidak menyertakan raw post text, kutipan bukti internal, data penulis, atau ID sumber privat.
+- Respons menyediakan `original_text` (teks sumber asli, nullable untuk event lama). Kutipan/offset bukti internal, metadata penulis terpisah, dan ID sumber privat tetap tidak dikirim.
 - Detail endpoint dan status API ada di [`docs/app_api_development.md`](docs/app_api_development.md); aturan produk ada di [`Spec.md`](Spec.md).
 
 Dokumentasi tunnel dan konfigurasi mengikuti [ngrok macOS setup](https://ngrok.com/download/mac-os?tab=download) dan [HTTP/S endpoint guide](https://ngrok.com/docs/gateway/endpoints/http).
@@ -183,3 +183,15 @@ install/start/status/stop/uninstall, dan batas log. Domain ngrok stabil belum
 ditemukan pada konfigurasi lokal saat persiapan; tunnel tetap diblokir sampai
 pemilik mengonfirmasi domain yang sudah dikonfigurasi. Tidak ada service dipasang
 atau dijalankan oleh perubahan ini.
+
+### Field teks asli pada feed
+
+Setiap item normal/mock sekarang memiliki `original_text` di samping `title` dan
+`summary`. Untuk event normal baru, teks disalin apa adanya saat worker menyimpan
+event; untuk mock, berasal dari input sintetis yang sama. Event lama bernilai
+`null`; tidak ada backfill otomatis. Field ini tidak mengubah filter/lokasi/severity.
+
+Migrasi `018_app_api_original_text.sql` harus diterapkan manual di Development
+sebelum men-deploy ulang worker/API yang memakai kolom baru. Migrasi belum diterapkan
+oleh perubahan kode ini; tidak ada koneksi atau perubahan data database. Lihat
+[kontrak API](docs/app_api_development.md#original-source-text) untuk detail.

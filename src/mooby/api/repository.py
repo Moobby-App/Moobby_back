@@ -22,6 +22,7 @@ SELECT
     v.event_kind,
     v.title,
     v.summary,
+    v.original_text,
     v.severity,
     v.event_at,
     v.event_time_certainty,
