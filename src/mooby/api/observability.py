@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -51,6 +51,8 @@ class _RequestState:
     response_started: bool = False
     response_finished: bool = False
     disconnect_observed: bool = False
+    transport_aborted: bool = False
+    transport_exception_category: str | None = None
     # A mutable per-request object crosses copied thread contexts. Never rely on
     # ContextVar.set() inside a sync endpoint propagating back to its ASGI caller.
     lock: Lock = field(default_factory=Lock, repr=False)
@@ -85,10 +87,15 @@ def _emit(state: _RequestState, event: str, *, stage=None, duration_ms=None):
                 "exception_category": state.exception_category,
                 "response_started": state.response_started,
                 "disconnect_observed": state.disconnect_observed,
+                "transport_aborted": state.transport_aborted,
+                "transport_exception_category": state.transport_exception_category,
             }
         if stage in _STAGES:
             record["stage"] = stage
             record["stage_duration_ms"] = max(0.0, duration_ms)
+        from mooby.api.diagnostic_sink import submit_record
+        if submit_record(record):
+            return
         logger.info(json.dumps(record, separators=(",", ":")))
     except Exception:
         # Do not recursively log an exporter/formatter/handler failure.
@@ -198,13 +205,22 @@ class RequestObservabilityMiddleware:
                 state.status = message["status"]
                 state.response_started = True
             with timed_stage("response_send"):
-                await send(message)
+                try:
+                    await send(message)
+                except BaseException as exc:
+                    # Keep transport outcome independent of the first retained
+                    # application failure (e.g. a handled database error).
+                    with state.lock:
+                        state.transport_aborted = True
+                        if state.transport_exception_category is None:
+                            state.transport_exception_category = _exception_category(exc, "response_send")
+                    raise
             if message["type"] == "http.response.body" and not message.get("more_body", False):
                 state.response_finished = True
 
         try:
             await self.app(scope, observed_receive, observed_send)
-            if state.disconnect_observed or not state.response_finished:
+            if state.transport_aborted or state.disconnect_observed or not state.response_finished:
                 terminal = "request_aborted"
                 set_category("aborted")
             else:
@@ -216,7 +232,7 @@ class RequestObservabilityMiddleware:
             raise
         except BaseException as exc:
             record_failure("application", exc)
-            terminal = ("request_aborted" if state.failure_stage == "response_send"
+            terminal = ("request_aborted" if state.transport_aborted
                         or not isinstance(exc, Exception) else "request_failed")
             set_category("aborted" if terminal == "request_aborted" else "unexpected_failure")
             raise
@@ -241,6 +257,20 @@ class RequestObservabilityMiddleware:
 
 
 class ObservedFastAPI(FastAPI):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from mooby.api.diagnostic_sink import diagnostic_lifespan, diagnostic_status
+        existing_lifespan = self.router.lifespan_context
+
+        @asynccontextmanager
+        async def lifespan(app):
+            async with diagnostic_lifespan():
+                async with existing_lifespan(app) as state:
+                    yield state
+
+        self.router.lifespan_context = lifespan
+        self.state.diagnostic_status = diagnostic_status
+
     def build_middleware_stack(self):
         # Outside Starlette's existing error handler: observe its real 500 send,
         # then preserve the original exception re-raise and public response.

@@ -19,11 +19,12 @@ A ContextVar holds a separate mutable state object per request; FastAPI/AnyIO's
 copied sync-thread context shares that request's state, not another request's state.
 The context is reset in `finally`. State updates shared across threads use a lock.
 
-Logger: `mooby.api.observability`, INFO level, one JSON object per logging call.
-R01 does not configure handlers or levels. Enable/capture this logger in a local
-test harness to inspect it. The current LaunchAgent still discards child output;
-persisting production or Development service diagnostics is R02, not implemented
-here. R01 does not claim to make those logs visible through existing service logs.
+Without a configured sink, logger `mooby.api.observability` receives INFO-level
+JSON records. R01 does not configure handlers or levels. R02 adds an optional
+[bounded file sink](diagnostic_sink.md) which receives validated records directly
+instead of forwarding them to other logging handlers. It is disabled by default.
+The LaunchAgent still discards raw child output; no operational activation has
+been performed. The diagnostic file is distinct from supervisor lifecycle logs.
 
 Events:
 
@@ -37,6 +38,18 @@ unexpected failures. It does not mean that every failure was an unhandled except
 `request_aborted` identifies an incomplete response, observed disconnect or failed
 send. Cancellation is re-raised after diagnostics; existing exceptions are not
 converted into new HTTP responses.
+
+The first observed failure remains in `failure_stage` / `exception_category`.
+Transport outcome is independent: any exception from the awaited ASGI send sets
+`transport_aborted` and retains a controlled `transport_exception_category`.
+A handled database failure followed by a failed 503 body send therefore emits
+one `request_aborted` terminal event, preserving the database failure and attempted
+503 status while identifying the transport failure separately. A successfully sent
+503 remains `request_failed` with no transport abort. A later send failure after
+partial body delivery is also an abort, never a successful completion.
+Cancellation still propagates with `request_cancelled`; if it occurs during send,
+the independent transport-abort fields are also set. No exception messages are
+stored, and send failures do not imply an observed `http.disconnect` message.
 
 All records contain this fixed field set:
 
@@ -54,6 +67,8 @@ All records contain this fixed field set:
 | `exception_category` | Fixed classification, never an exception message/class name |
 | `response_started` | A response-start send was attempted at this boundary |
 | `disconnect_observed` | Application-requested receive returned `http.disconnect` |
+| `transport_aborted` | An awaited ASGI send raised; independent of the primary failure |
+| `transport_exception_category` | Controlled category of the first send exception, otherwise null |
 
 Stage records additionally contain `stage` and `stage_duration_ms`. UTC admission
 and terminal timestamps indicate processing start/end. Duration is independent of
@@ -106,8 +121,8 @@ are replaced by correlated diagnostics with fixed classifications.
 
 Logging/formatting/handler exceptions are swallowed without recursive logging.
 Records can be lost if the logger is disabled or fails; this does not change the
-HTTP response. Abrupt process termination can prevent a terminal record. R02 will
-address sinks and operational log visibility separately.
+HTTP response. Abrupt process termination can prevent a terminal record. See the
+R02 sink documentation for queue drops, per-process counters and bounded shutdown.
 
 ## Limits intentionally deferred
 

@@ -277,7 +277,8 @@ class RequestObservabilityTests(ObservabilityTestCase):
             self.assertNotIn(value, encoded)
         allowed = {"event", "request_id", "timestamp", "route", "method", "status", "category",
                    "duration_ms", "failure_stage", "exception_category", "response_started",
-                   "disconnect_observed", "stage", "stage_duration_ms"}
+                   "disconnect_observed", "transport_aborted", "transport_exception_category",
+                   "stage", "stage_duration_ms"}
         self.assertTrue(all(set(e) <= allowed for e in self.events))
         self.assertTrue(all(e["route"] in {None, "/api/v1/disruptions"} for e in self.events))
 
@@ -353,6 +354,8 @@ class ASGIBoundaryTests(ObservabilityTestCase):
         self.assertEqual(self.terminal()["failure_stage"], "response_send")
         self.assertEqual(self.terminal()["event"], "request_aborted")
         self.assertFalse(self.terminal()["disconnect_observed"])
+        self.assertTrue(self.terminal()["transport_aborted"])
+        self.assertEqual(self.terminal()["transport_exception_category"], "transport_error")
         self.events.clear()
         async def incomplete(scope, receive, send):
             await send({"type": "http.response.start", "status": 200})
@@ -366,6 +369,137 @@ class ASGIBoundaryTests(ObservabilityTestCase):
         asyncio.run(obs.RequestObservabilityMiddleware(app)({"type": "lifespan"}, None, None))
         self.assertEqual(received, ["lifespan"])
         self.assertEqual(self.events, [])
+
+
+class CompoundFailureTests(ObservabilityTestCase):
+    async def run_api(self, send):
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await create_app()({
+            "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+            "method": "GET", "scheme": "http", "path": "/api/v1/disruptions",
+            "raw_path": b"/api/v1/disruptions", "root_path": "",
+            "query_string": b"station_ids=open-krl:SRP",
+            "headers": [(b"authorization", ("Bearer " + TOKEN).encode())],
+            "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 8000),
+        }, receive, send)
+
+    def failing_driver(self):
+        driver = DriverDouble("feed")
+        self.connect.side_effect = None
+        self.connect.return_value = driver
+        return driver
+
+    def test_handled_database_error_then_body_send_failure(self):
+        driver = self.failing_driver()
+        sent = []
+        failure = OSError(PRIVATE)
+        async def send(message):
+            if message["type"] == "http.response.body":
+                raise failure
+            sent.append(message)
+        with self.assertRaises(OSError) as caught:
+            asyncio.run(self.run_api(send))
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(sent[0]["status"], 503)
+        terminal = self.terminal()
+        self.assertEqual(terminal["event"], "request_aborted")
+        self.assertEqual(terminal["category"], "aborted")
+        self.assertEqual(terminal["status"], 503)
+        self.assertTrue(terminal["response_started"])
+        self.assertEqual(terminal["failure_stage"], "database_feed")
+        self.assertEqual(terminal["exception_category"], "database_error")
+        self.assertTrue(terminal["transport_aborted"])
+        self.assertEqual(terminal["transport_exception_category"], "transport_error")
+        self.assertFalse(terminal["disconnect_observed"])
+        send_events = [e for e in self.events if e.get("stage") == "response_send"]
+        self.assertFalse(send_events[0]["transport_aborted"])
+        self.assertTrue(send_events[-1]["transport_aborted"])
+        self.assertEqual({e["request_id"] for e in self.events}, {terminal["request_id"]})
+        self.assertEqual(len(driver.queries), 2)
+        self.assertTrue(driver.closed)
+        self.assertIsNone(obs.current_request_id())
+        self.assertNotIn(PRIVATE, json.dumps(self.events))
+
+    def test_partial_body_then_non_oserror_send_failure(self):
+        failure = RuntimeError(PRIVATE)
+        sent = []
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": PRIVATE.encode(), "more_body": True})
+            await send({"type": "http.response.body", "body": PRIVATE.encode(), "more_body": False})
+        async def send(message):
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                raise failure
+            sent.append(message)
+        with self.assertRaises(RuntimeError) as caught:
+            asyncio.run(obs.RequestObservabilityMiddleware(app)(
+                {"type": "http", "method": "GET"}, None, send))
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(len(sent), 2)
+        self.assertTrue(sent[1]["more_body"])
+        terminal = self.terminal()
+        self.assertEqual(terminal["event"], "request_aborted")
+        self.assertEqual(terminal["status"], 200)
+        self.assertEqual(terminal["failure_stage"], "response_send")
+        self.assertTrue(terminal["transport_aborted"])
+        self.assertEqual(terminal["transport_exception_category"], "unexpected_error")
+        self.assertNotIn(PRIVATE, json.dumps(self.events))
+        self.assertIsNone(obs.current_request_id())
+        self.connect.assert_not_called()
+
+    def test_handled_database_error_with_successful_response_is_unchanged(self):
+        driver = self.failing_driver()
+        sent = []
+        async def send(message):
+            sent.append(message)
+        asyncio.run(self.run_api(send))
+        self.assertEqual(sent[0]["status"], 503)
+        body = json.loads(b"".join(m.get("body", b"") for m in sent))
+        self.assertEqual(body["availability"], "source_unavailable")
+        terminal = self.terminal()
+        self.assertEqual(terminal["event"], "request_failed")
+        self.assertEqual(terminal["category"], "source_unavailable")
+        self.assertEqual(terminal["failure_stage"], "database_feed")
+        self.assertEqual(terminal["exception_category"], "database_error")
+        self.assertFalse(terminal["transport_aborted"])
+        self.assertIsNone(terminal["transport_exception_category"])
+        self.assertEqual(len(driver.queries), 2)
+        self.assertTrue(driver.closed)
+
+    def test_logger_failure_does_not_replace_compound_send_exception(self):
+        driver = self.failing_driver()
+        sent = []
+        failure = OSError(PRIVATE)
+        async def send(message):
+            if message["type"] == "http.response.body":
+                raise failure
+            sent.append(message)
+        with patch.object(obs.logger, "info", side_effect=RuntimeError("synthetic logger failure")):
+            with self.assertRaises(OSError) as caught:
+                asyncio.run(self.run_api(send))
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(sent[0]["status"], 503)
+        self.assertEqual(len(driver.queries), 2)
+        self.assertTrue(driver.closed)
+        self.assertIsNone(obs.current_request_id())
+
+    def test_cancellation_during_send_preserves_cancelled_lifecycle(self):
+        failure = asyncio.CancelledError()
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+        async def send(message):
+            raise failure
+        with self.assertRaises(asyncio.CancelledError) as caught:
+            asyncio.run(obs.RequestObservabilityMiddleware(app)(
+                {"type": "http", "method": "GET"}, None, send))
+        self.assertIs(caught.exception, failure)
+        terminal = self.terminal()
+        self.assertEqual(terminal["event"], "request_cancelled")
+        self.assertEqual(terminal["category"], "cancelled")
+        self.assertTrue(terminal["transport_aborted"])
+        self.assertEqual(terminal["transport_exception_category"], "cancellation")
+        self.assertIsNone(obs.current_request_id())
 
 
 if __name__ == "__main__":

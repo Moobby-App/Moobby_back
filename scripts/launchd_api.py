@@ -33,7 +33,7 @@ def base_environment():
 def read_settings(path=CONFIG):
     value = json.loads(path.read_text())
     required = {'expected_project_ref', 'ngrok_config_file', 'stable_domain'}
-    if not required <= set(value) or set(value) - required - {'mock_enabled', 'mock_ttl_minutes'}:
+    if not required <= set(value) or set(value) - required - {'mock_enabled', 'mock_ttl_minutes', 'diagnostics'}:
         raise ConfigurationBlocked('invalid_local_configuration')
     return value
 
@@ -78,6 +78,23 @@ def api_environment(settings, env_file=ROOT/'.env'):
                    APP_API_SYNTHETIC_FIXTURE_MODE='development',
                    APP_API_SYNTHETIC_FIXTURE_TTL_MINUTES=str(ttl))
     env['PYTHONDONTWRITEBYTECODE'] = '1'
+    # Optional numeric-only diagnostics config; no path, secret or inherited
+    # logging variables. Invalid diagnostics must not prevent API startup.
+    diagnostics = settings.get('diagnostics', {})
+    try:
+        from mooby.api.diagnostic_sink import SinkSettings
+        if (type(diagnostics) is not dict
+            or set(diagnostics) - {'enabled', 'capacity', 'max_bytes', 'backups', 'flush_seconds'}
+            or type(diagnostics.get('enabled', False)) is not bool):
+            raise ValueError('invalid diagnostics')
+        limits = SinkSettings(**{k: v for k, v in diagnostics.items() if k != 'enabled'})
+        if diagnostics.get('enabled', False):
+            env.update(MOOBY_DIAGNOSTIC_ENABLED='1', MOOBY_DIAGNOSTIC_CAPACITY=str(limits.capacity),
+                       MOOBY_DIAGNOSTIC_MAX_BYTES=str(limits.max_bytes),
+                       MOOBY_DIAGNOSTIC_BACKUPS=str(limits.backups),
+                       MOOBY_DIAGNOSTIC_FLUSH_SECONDS=str(limits.flush_seconds))
+    except Exception:
+        env['MOOBY_DIAGNOSTIC_ENABLED'] = 'invalid'  # Child disables sink and counts configuration failure.
     return env
 
 
