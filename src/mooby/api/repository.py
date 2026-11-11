@@ -8,8 +8,11 @@ from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
+from pydantic import ValidationError
 
 from mooby.api.observability import observe_sync, timed_stage
+
+READ_ERRORS = (psycopg.Error, OSError, ValidationError, KeyError, TypeError, ValueError)
 
 
 @observe_sync("database_connect")
@@ -58,6 +61,10 @@ ORDER BY v.freshness_anchor_at DESC, v.public_event_id
 LIMIT %s OFFSET %s
 """
 
+# Resolve all feed fields, filter operators and ordering without fetching rows.
+# The single remaining parameter is an empty station array; no route is needed.
+_PROJECTION_SQL = _SEARCH_SQL.replace("LIMIT %s OFFSET %s", "LIMIT 0")
+
 
 def fetch_disruptions(
     *,
@@ -100,7 +107,7 @@ def check_database(
             with timed_stage("database_readiness"):
                 conn.execute("SELECT transaction_timestamp()").fetchone()
         return True
-    except psycopg.Error:
+    except READ_ERRORS:
         return False
 
 
@@ -115,9 +122,7 @@ def check_app_api_projection(
             options=f"-c statement_timeout={statement_timeout_ms}",
         ) as conn:
             with timed_stage("projection_readiness"):
-                conn.execute(
-                    "SELECT public_event_id FROM app_api.published_disruptions LIMIT 1"
-                ).fetchone()
+                conn.execute(_PROJECTION_SQL, ([],)).fetchall()
         return True
-    except psycopg.Error:
+    except READ_ERRORS:
         return False

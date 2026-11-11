@@ -11,8 +11,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import psycopg
-from pydantic import ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 
 from mooby.api.config import ApiConfigurationError, ApiSettings
 from mooby.api.observability import (
@@ -26,6 +25,7 @@ from mooby.api.models import (
     StationOrSegment,
 )
 from mooby.api.repository import (
+    READ_ERRORS,
     check_app_api_projection,
     check_database,
     fetch_disruptions,
@@ -39,6 +39,8 @@ from mooby.api.synthetic_fixtures import (
 _bearer = HTTPBearer(auto_error=False)
 _STATION_ID = re.compile(r"^open-krl:[A-Z0-9]+$")
 _PROCESS_STARTED_AT = datetime.now(timezone.utc)
+_LIMIT = TypeAdapter(Annotated[int, Field(ge=1, le=50)])
+_OFFSET = TypeAdapter(Annotated[int, Field(ge=0, le=1000)])
 
 
 class ApiUnavailable(Exception):
@@ -143,6 +145,38 @@ def _feed(**values) -> DisruptionFeed:
     return feed
 
 
+def _unavailable_feed(limit: int, offset: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content=_feed(
+            availability="source_unavailable", generated_at=None,
+            message="Informasi gangguan belum dapat diperiksa. Coba lagi.",
+            items=[], limit=limit, offset=offset,
+        ).model_dump(mode="json"),
+    )
+
+
+def _error_pagination(request: Request) -> tuple[int, int]:
+    # Configuration errors occur before FastAPI's endpoint parameter validation.
+    # Preserve each valid scalar value using the same Pydantic integer rules;
+    # invalid values retain defaults without changing existing error precedence.
+    values = []
+    for name, default, adapter in (("limit", 20, _LIMIT), ("offset", 0, _OFFSET)):
+        try:
+            values.append(adapter.validate_python(request.query_params.get(name, default)))
+        except ValidationError:
+            values.append(default)
+    return values[0], values[1]
+
+
+def _readiness_result(database: bool, projection: bool) -> Readiness | JSONResponse:
+    result = Readiness(database="available" if database else "unavailable",
+                       app_api_projection="available" if projection else "unavailable")
+    if not database or not projection:
+        return JSONResponse(status_code=503, content=result.model_dump(mode="json"))
+    return result
+
+
 def create_app() -> FastAPI:
     app = ObservedFastAPI(
         title="Mooby App API",
@@ -153,20 +187,10 @@ def create_app() -> FastAPI:
     )
 
     @app.exception_handler(ApiUnavailable)
-    def unavailable(_: Request, __: ApiUnavailable) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={
-                "availability": "source_unavailable",
-                "generated_at": None,
-                "window_hours": 24,
-                "message": "Informasi gangguan belum dapat diperiksa. Coba lagi.",
-                "items": [],
-                "limit": 20,
-                "offset": 0,
-                "next_offset": None,
-            },
-        )
+    def unavailable(request: Request, __: ApiUnavailable) -> JSONResponse:
+        if getattr(request.scope.get("route"), "path", None) == "/health/ready":
+            return _readiness_result(False, False)
+        return _unavailable_feed(*_error_pagination(request))
 
     @app.get("/health/live")
     @observe_sync("endpoint_execution")
@@ -175,32 +199,22 @@ def create_app() -> FastAPI:
 
     @app.get("/health/ready", response_model=Readiness)
     @observe_sync("endpoint_execution")
-    def ready(settings: Annotated[ApiSettings, Depends(_require_auth)]) -> Readiness:
-        database_available = check_database(
-            database_url=settings.database_url,
-            connect_timeout_seconds=settings.connect_timeout_seconds,
-            statement_timeout_ms=settings.statement_timeout_ms,
-        )
-        projection_available = database_available and check_app_api_projection(
-            database_url=settings.database_url,
-            connect_timeout_seconds=settings.connect_timeout_seconds,
-            statement_timeout_ms=settings.statement_timeout_ms,
-        )
-        if not database_available or not projection_available:
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={
-                    "api": "available",
-                    "database": "available" if database_available else "unavailable",
-                    "app_api_projection": (
-                        "available" if projection_available else "unavailable"
-                    ),
-                },
+    def ready(settings: Annotated[ApiSettings, Depends(_require_auth)]) -> Readiness | JSONResponse:
+        database_available = projection_available = False
+        try:
+            database_available = check_database(
+                database_url=settings.database_url,
+                connect_timeout_seconds=settings.connect_timeout_seconds,
+                statement_timeout_ms=settings.statement_timeout_ms,
             )
-        return Readiness(
-            database="available",
-            app_api_projection="available",
-        )
+            projection_available = database_available and check_app_api_projection(
+                database_url=settings.database_url,
+                connect_timeout_seconds=settings.connect_timeout_seconds,
+                statement_timeout_ms=settings.statement_timeout_ms,
+            )
+        except READ_ERRORS as exc:
+            record_failure("projection_readiness" if database_available else "database_readiness", exc)
+        return _readiness_result(database_available, projection_available)
 
     @app.get("/api/v1/mock/disruptions", response_model=DisruptionFeed)
     @observe_sync("endpoint_execution")
@@ -274,38 +288,17 @@ def create_app() -> FastAPI:
                 )
             has_more = len(page.rows) > limit
             items = [_item(row) for row in page.rows[:limit]]
-        except (psycopg.Error, OSError, ValidationError, KeyError, TypeError, ValueError) as exc:
-            record_failure("feed_read", exc)
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content=_feed(
-                    availability="source_unavailable",
-                    generated_at=None,
-                    message="Informasi gangguan belum dapat diperiksa. Coba lagi.",
-                    items=[],
-                    limit=limit,
-                    offset=offset,
-                ).model_dump(mode="json"),
-            )
-        if items:
             return _feed(
-                availability="results",
+                availability="results" if items else "no_match",
                 generated_at=page.generated_at,
-                message="Laporan gangguan yang cocok ditemukan.",
-                items=items,
-                limit=limit,
-                offset=offset,
+                message=("Laporan gangguan yang cocok ditemukan." if items else
+                         "Tidak ditemukan laporan gangguan yang cocok dalam 24 jam terakhir."),
+                items=items, limit=limit, offset=offset,
                 next_offset=offset + limit if has_more else None,
             )
-        return _feed(
-            availability="no_match",
-            generated_at=page.generated_at,
-            message="Tidak ditemukan laporan gangguan yang cocok dalam 24 jam terakhir.",
-            items=[],
-            limit=limit,
-            offset=offset,
-            next_offset=None,
-        )
+        except READ_ERRORS as exc:
+            record_failure("feed_read", exc)
+            return _unavailable_feed(limit, offset)
 
     return app
 

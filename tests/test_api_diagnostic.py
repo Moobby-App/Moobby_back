@@ -11,7 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'scripts'))
 import diagnose_api_feed as diagnostic
 from mooby.api.config import ApiSettings
-from mooby.api.repository import _SEARCH_SQL
+from mooby.api.repository import _PROJECTION_SQL, _SEARCH_SQL
 from psycopg.errors import OperationalError, UndefinedColumn
 
 
@@ -29,11 +29,11 @@ class FakeConnection:
 
     def execute(self, sql, params=()):
         self.queries.append((sql, params))
-        if self.fail_readiness and sql == 'SELECT public_event_id FROM app_api.published_disruptions LIMIT 1':
+        if self.fail_readiness and sql == _PROJECTION_SQL:
             raise UndefinedColumn('PRIVATE SQL ROW PARAMETER CREDENTIAL')
         if 'AS generated_at' in sql:
             row = {'generated_at': datetime(2026, 11, 8, tzinfo=timezone.utc)}
-        elif sql == 'SELECT public_event_id FROM app_api.published_disruptions LIMIT 1':
+        elif sql == _PROJECTION_SQL:
             row = None
         else:
             row = {'count': 0}

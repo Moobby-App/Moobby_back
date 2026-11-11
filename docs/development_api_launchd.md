@@ -50,19 +50,60 @@ Copy `ops/launchd/development-api.json.example` to ignored
 Never put a database URL, bearer token, authtoken or API key in JSON/plist files.
 
 For the API, local `.env` is parsed as data, not sourced by a shell, with expansion
-and interpolation disabled. Only `APP_API_DATABASE_URL` and `APP_API_BEARER_TOKEN`
-are selected and passed to Uvicorn as environment variables. Generic/admin/worker
-URLs, inherited `PG*` routing, ngrok tokens and other `.env` settings are not used.
+and interpolation disabled. The core API allowlist consists of
+`APP_API_DATABASE_URL`, `APP_API_BEARER_TOKEN` and the two optional database timeout
+settings below. Generic/admin/worker URLs, inherited `PG*` routing, ngrok tokens
+and unrelated `.env` settings are not used. Explicit mock/diagnostic opt-ins retain
+their separately documented, restricted environment forwarding.
 The database URL must use `mooby_app_api_login_dev` on
 `db.<expected-ref>.supabase.co`, or `mooby_app_api_login_dev.<expected-ref>` on a
 Supabase pooler hostname. The expected ref must be supplied independently; no code
 can infer which project is Development from a naming convention alone.
 
-Other API `.env` options, including synthetic-fixture flags and timeout overrides,
-are intentionally not forwarded. Optional mock activation comes only from the
-local JSON fields described below. The normal feed always reads the database;
-existing default timeouts apply. This setup does not change `.env`, token values, or application behavior.
+Other API `.env` options, including synthetic-fixture activation flags, are not
+forwarded. Optional mock activation comes only from the local JSON fields described
+below. The normal feed always reads the database. This setup does not modify `.env`
+or token values. The optional R02 diagnostic sink is still disabled by default.
 The bearer token must meet the API's existing minimum 32-character requirement.
+
+### R04 database timeout forwarding
+
+| Local `.env` variable | Units | Default if absent | Inclusive range |
+|---|---|---|---|
+| `APP_API_CONNECT_TIMEOUT_SECONDS` | seconds | 3 | 1–15 |
+| `APP_API_STATEMENT_TIMEOUT_MS` | milliseconds | 3000 | 100–10000 |
+
+These exact names are optional; there are no aliases or JSON timeout settings.
+Only explicitly present local values are forwarded, preserving the strings returned
+by the dotenv parser. Parent-process timeout values cannot fill missing settings.
+Quoted leading/trailing whitespace is retained and accepted by the existing Python
+`int()` parser; signs/leading zeros keep their existing behavior. Fractional or
+scientific notation, blank/valueless entries, non-numeric strings and values outside
+the existing ranges are invalid. Shell-like text is never executed/interpolated.
+
+`ApiSettings.from_env()` and supervisor validation share `from_mapping()`. The
+supervisor validates the proposed child mapping without mutating `os.environ`.
+Missing keys use the application defaults; invalid present values do **not** silently
+fall back. They produce only `invalid_api_timeout_configuration` and prevent child
+startup, following the existing configuration-blocked lifecycle (normal supervisor
+exit 0; `--check-config` exit 1). Fixing configuration/restarting requires a separate
+owner action; no running process is changed by local preparation. The tunnel's
+existing API-configuration preflight also blocks a new tunnel launch on invalid
+timeouts, but the tunnel child never receives timeout or API credential variables.
+
+The existing repository passes seconds as psycopg `connect_timeout` and milliseconds
+as PostgreSQL startup `options="-c statement_timeout=<value>"` for the normal feed
+and readiness connections. No new SQL or transaction behavior is introduced.
+These are database-stage settings, **not** an overall HTTP deadline or a guarantee
+of synchronous query cancellation. Psycopg's handling of a one-second setting and
+multi-address attempts can differ from a whole-request elapsed-time bound. Actual
+Supabase pooler acceptance/effectiveness remains unverified without authorized
+live inspection.
+
+Preparation tests do not edit local `.env`, JSON/plist files, start children or
+restart services. To roll back R04 source, reverse only its supervisor/config-parser
+changes and tests, preserving R01–R03. Deploying either version requires separate
+authorization; a rollback again stops forwarding optional overrides and uses defaults.
 
 The child commands reuse the current configuration/commands:
 

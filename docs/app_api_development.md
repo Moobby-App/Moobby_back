@@ -117,7 +117,7 @@ Exact repository query stages:
 |---|---|
 | All three repository connections | `psycopg.connect` with `APP_API_DATABASE_URL`, configured connect timeout, dict rows, and startup `options="-c statement_timeout=<configured-ms>"` (default 3000) |
 | Database readiness | `SELECT transaction_timestamp()` |
-| Projection readiness | `SELECT public_event_id FROM app_api.published_disruptions LIMIT 1` |
+| Projection readiness | Full `_SEARCH_SQL` SELECT/filter/ordering with pagination replaced by `LIMIT 0`; bind an empty station array; fetch no rows |
 | Feed timestamp | `SELECT transaction_timestamp() AS generated_at`, then fetch `generated_at` |
 | Feed rows | `_SEARCH_SQL`: the 22 view fields listed below plus computed freshness; affected-station array overlap, deterministic ordering, limit+1/offset |
 | Feed response | `_item()` validates/maps selected rows to the typed response; empty rows become `no_match` |
@@ -142,13 +142,43 @@ used the same startup options, timeouts, process environment, or query plan.
 
 The readiness body can narrow the failure before running further checks:
 
-- Feed-shaped `availability: source_unavailable` from readiness: API settings failed
-  before its database probe (see the `ApiUnavailable` handler).
-- `database: unavailable`: connection/startup-options/clock probe failed.
-- `database: available` with `app_api_projection: unavailable`: the minimal
-  `public_event_id` SELECT failed.
-- Readiness passes but feed fails: inspect full columns, array operator, ordering,
-  query timeout or response validation. The independent mock endpoint can fail separately.
+- `database: unavailable`: settings, connection/startup-options or clock probe
+  failed. Configuration failures now use the same readiness-shaped 503 body.
+- `database: available` with `app_api_projection: unavailable`: the complete
+  zero-row feed projection/filter/order probe failed.
+- Readiness passes but feed fails: inspect runtime query timeout, concurrent
+  database/schema changes or actual row/response validation. The zero-row probe
+  validates column/operator availability, not real row contents or feed latency.
+  The independent mock endpoint can fail separately.
+
+### R03 error contract
+
+The normal feed keeps its existing success schema, station-ID overlap, ordering
+and pagination. It still performs exactly two SELECTs per repository call. Mapping
+and feed-envelope validation are inside the guarded read boundary and produce
+`503 source_unavailable`, empty items and null `generated_at`/`next_offset` on the
+recognized driver, OS, validation or mapping failures. Unexpected programming
+errors are not indiscriminately converted to dependency failures.
+
+Configuration is still checked before auth/query validation. Its feed-shaped 503
+preserves each valid requested limit/offset; absent or invalid values independently
+fall back to 20/0. Integer parsing uses the same Pydantic rules and bounds as the
+endpoint; duplicate scalar parameters use the last value. Invalid pagination with
+valid server configuration still returns the existing 422 response. Missing/wrong
+Bearer credentials still return the existing 401 response when settings are valid.
+
+Readiness uses the same recognized error categories and returns only its existing
+`api`, `database`, and `app_api_projection` fields, including configuration errors.
+It first probes the database clock, then resolves the actual feed SELECT, overlap
+operator and ordering with an empty station array and `LIMIT 0`. Empty views are
+healthy. No model/data rows are fetched by this probe. Readiness still uses at
+most two connections and one SELECT on each, with the same timeout mechanism.
+Liveness remains unauthenticated and independent of database/configuration.
+
+The manual diagnostic below uses that same zero-row SQL for its projection and
+schema stages; the repeated diagnostic probes are not part of normal feed reads.
+R03 does not apply migrations, change permissions, enable diagnostic files,
+introduce caching/pooling, or implement an overall request deadline.
 
 ### Manual diagnostic — not run during implementation
 

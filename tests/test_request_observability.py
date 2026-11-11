@@ -192,11 +192,11 @@ class RequestObservabilityTests(ObservabilityTestCase):
                 self.assertEqual(self.terminal()["failure_stage"], "authentication")
         self.connect.assert_not_called()
 
-    def test_configuration_error_is_observed_without_contract_fix(self):
+    def test_configuration_error_preserves_valid_pagination(self):
         with patch.dict("os.environ", {"APP_API_BEARER_TOKEN": ""}):
             start, raw, error = self.call(query={"station_ids": "open-krl:SRP", "limit": 7})
         self.assertEqual(start["status"], 503); self.assertIsNone(error)
-        self.assertEqual(json.loads(raw)["limit"], 20)  # Existing R03 gap is unchanged.
+        self.assertEqual(json.loads(raw)["limit"], 7)
         self.assertEqual(self.terminal()["exception_category"], "configuration_error")
         self.assertEqual(self.terminal()["failure_stage"], "authentication")
 
@@ -235,14 +235,14 @@ class RequestObservabilityTests(ObservabilityTestCase):
         self.assertEqual(self.terminal()["failure_stage"], "row_mapping")
         self.assertEqual(self.terminal()["exception_category"], "validation_error")
 
-    def test_unhandled_envelope_validation_still_returns_existing_500(self):
+    def test_envelope_validation_is_handled_as_503(self):
         with patch("mooby.api.app.fetch_disruptions", return_value=FeedPage(PRIVATE, [])):
             start, _, error = self.call()
-        self.assertEqual(start["status"], 500)
-        self.assertIsNotNone(error)
+        self.assertEqual(start["status"], 503)
+        self.assertIsNone(error)
         event = self.terminal()
         self.assertEqual(event["failure_stage"], "response_validation")
-        self.assertEqual(event["status"], 500)
+        self.assertEqual(event["status"], 503)
         self.assertTrue(event["response_started"])
 
     def test_automatic_fastapi_response_validation_failure_is_classified(self):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+from collections.abc import Mapping
 
 
 class ApiConfigurationError(ValueError):
@@ -19,16 +20,21 @@ class ApiSettings:
 
     @classmethod
     def from_env(cls) -> "ApiSettings":
-        database_url = os.environ.get("APP_API_DATABASE_URL", "").strip()
-        bearer_token = os.environ.get("APP_API_BEARER_TOKEN", "").strip()
+        return cls.from_mapping(os.environ)
+
+    @classmethod
+    def from_mapping(cls, values: Mapping[str, str]) -> "ApiSettings":
+        """Validate a child environment without mutating the supervisor's environment."""
+        database_url = values.get("APP_API_DATABASE_URL", "").strip()
+        bearer_token = values.get("APP_API_BEARER_TOKEN", "").strip()
         if not database_url.startswith(("postgresql://", "postgres://")):
             raise ApiConfigurationError("APP_API_DATABASE_URL is missing or invalid")
         if len(bearer_token) < 32:
             raise ApiConfigurationError("APP_API_BEARER_TOKEN is missing or too short")
         try:
-            connect_timeout = int(os.environ.get("APP_API_CONNECT_TIMEOUT_SECONDS", "3"))
-            statement_timeout = int(os.environ.get("APP_API_STATEMENT_TIMEOUT_MS", "3000"))
-        except ValueError as exc:
+            connect_timeout = int(values.get("APP_API_CONNECT_TIMEOUT_SECONDS", "3"))
+            statement_timeout = int(values.get("APP_API_STATEMENT_TIMEOUT_MS", "3000"))
+        except (TypeError, ValueError) as exc:
             raise ApiConfigurationError("API timeout configuration is invalid") from exc
         if not 1 <= connect_timeout <= 15:
             raise ApiConfigurationError("APP_API_CONNECT_TIMEOUT_SECONDS is out of range")

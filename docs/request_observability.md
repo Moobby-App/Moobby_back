@@ -3,7 +3,8 @@
 R01 adds request-local diagnostics only. HTTP bodies, headers, status codes,
 authentication, query text/parameters and database-operation counts are unchanged.
 There is no Redis, exporter, log handler, new configuration or service operation.
-Existing error-contract gaps are intentionally left for R03.
+R03 subsequently guards normal-feed envelope validation and aligns readiness/error
+responses; see the [API error contract](app_api_development.md#r03-error-contract).
 
 ## Correlation and event records
 

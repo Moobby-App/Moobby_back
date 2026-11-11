@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
 import psycopg
 from psycopg.rows import dict_row
 from mooby.api.config import ApiSettings
-from mooby.api.repository import _SEARCH_SQL
+from mooby.api.repository import _PROJECTION_SQL, _SEARCH_SQL
 from mooby.api.app import _item
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,9 +101,9 @@ def diagnose(settings, station_ids, emit, *, limit=20, offset=0):
                     ('view_count', lambda: conn.execute(
                         'SELECT count(*) FROM app_api.published_disruptions').fetchone()),
                     ('projection_readiness', lambda: conn.execute(
-                        'SELECT public_event_id FROM app_api.published_disruptions LIMIT 1').fetchone()),
+                        _PROJECTION_SQL, ([],)).fetchall()),
                     ('feed_schema', lambda: conn.execute(
-                        _SEARCH_SQL.split('WHERE v.affected_station_ids', 1)[0]+' LIMIT 0').fetchall()),
+                        _PROJECTION_SQL, ([],)).fetchall()),
                 ]
                 for suffix, operation in operations:
                     ok, _ = query_probe(conn, prefix+'.'+suffix, operation, emit)

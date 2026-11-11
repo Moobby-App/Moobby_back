@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT/'ops/launchd/development-api.json'
 NGROK = Path('/opt/homebrew/bin/ngrok')
 API_KEYS = ('APP_API_DATABASE_URL', 'APP_API_BEARER_TOKEN')
+API_TIMEOUT_KEYS = ('APP_API_CONNECT_TIMEOUT_SECONDS', 'APP_API_STATEMENT_TIMEOUT_MS')
 
 
 class ConfigurationBlocked(ValueError):
@@ -59,8 +60,15 @@ def api_environment(settings, env_file=ROOT/'.env'):
         raise ConfigurationBlocked('invalid_development_api_database_target')
     if len(api['APP_API_BEARER_TOKEN']) < 32:
         raise ConfigurationBlocked('invalid_api_bearer_configuration')
+    from mooby.api.config import ApiConfigurationError, ApiSettings
+    timeouts = {key: values[key] for key in API_TIMEOUT_KEYS if key in values}
+    try:
+        ApiSettings.from_mapping({**api, **timeouts})
+    except ApiConfigurationError:
+        raise ConfigurationBlocked('invalid_api_timeout_configuration') from None
     env = base_environment()
     env.update(api)
+    env.update(timeouts)  # Preserve valid local values verbatim; absent keys use app defaults.
     enabled = settings.get('mock_enabled', False)
     ttl = settings.get('mock_ttl_minutes', 60)
     if type(enabled) is not bool or type(ttl) is not int or not 1 <= ttl <= 240:
