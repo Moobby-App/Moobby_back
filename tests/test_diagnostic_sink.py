@@ -1,8 +1,10 @@
 """R02: temporary files, in-memory ASGI, fake writers. No external services."""
 import asyncio
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
+import errno
 import logging
 import os
 from pathlib import Path
@@ -123,6 +125,42 @@ class DiagnosticSinkTests(unittest.TestCase):
                 self.assertEqual(sink.snapshot()["initialization_failures"], 1)
                 self.assertEqual(sink.snapshot()["written"], 0)
                 self.assertEqual(sink.snapshot()["dropped"], 1)
+
+    def test_directory_fstat_failure_closes_every_opened_descriptor_once(self):
+        original_open, original_close, original_fstat = os.open, os.close, os.fstat
+        for failure_at in (1, 2, 3):
+            with self.subTest(directory_validation=failure_at):
+                root = self.root / f"failure-{failure_at}"; root.mkdir()
+                opened, closed = [], []
+                calls = 0
+                failure = OSError(errno.EIO, "synthetic directory stat failure")
+                def tracked_open(*args, **kwargs):
+                    fd = original_open(*args, **kwargs)
+                    opened.append(fd)
+                    return fd
+                def tracked_close(fd):
+                    closed.append(fd)
+                    return original_close(fd)
+                def failing_fstat(fd):
+                    nonlocal calls
+                    calls += 1
+                    if calls == failure_at:
+                        raise failure
+                    return original_fstat(fd)
+                with patch.object(ds.os, "open", side_effect=tracked_open), \
+                     patch.object(ds.os, "close", side_effect=tracked_close), \
+                     patch.object(ds.os, "fstat", side_effect=failing_fstat):
+                    with self.assertRaises(OSError) as caught:
+                        ds._FileWriter(root, ds.SinkSettings())
+                self.assertIs(caught.exception, failure)
+                self.assertEqual(len(opened), failure_at + 1)  # Root plus child directories.
+                self.assertEqual(Counter(closed), Counter(opened))
+                for fd in set(opened):
+                    with self.assertRaises(OSError) as invalid:
+                        original_fstat(fd)
+                    self.assertEqual(invalid.exception.errno, errno.EBADF)
+                self.assertEqual(list(root.rglob("api-requests.jsonl*")), [])
+                self.assertEqual(list(root.rglob("writer.lock")), [])
 
     def test_symlink_directory_or_file_and_hardlinks_are_rejected(self):
         target = self.root / "outside"; target.mkdir()

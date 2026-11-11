@@ -113,12 +113,17 @@ class _FileWriter:
                     pass
                 child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                                 dir_fd=self.directory)
-                info = os.fstat(child)
-                if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o022:
-                    os.close(child)
-                    raise PermissionError("unsafe diagnostic directory")
-                os.close(self.directory)
-                self.directory = child
+                try:
+                    info = os.fstat(child)
+                    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o022:
+                        raise PermissionError("unsafe diagnostic directory")
+                    parent = self.directory
+                    self.directory = child
+                    child = None  # Ownership transferred before releasing parent.
+                    os.close(parent)
+                finally:
+                    if child is not None:
+                        os.close(child)
             os.fchmod(self.directory, 0o700)
             self.lockfile = self._open("writer.lock", os.O_RDWR | os.O_CREAT)
             fcntl.flock(self.lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
