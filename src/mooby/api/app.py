@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hmac
-import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -16,6 +15,9 @@ import psycopg
 from pydantic import ValidationError
 
 from mooby.api.config import ApiConfigurationError, ApiSettings
+from mooby.api.observability import (
+    ObservedFastAPI, observe_sync, record_failure, set_category, timed_stage,
+)
 from mooby.api.models import (
     AppSource,
     DisruptionFeed,
@@ -34,7 +36,6 @@ from mooby.api.synthetic_fixtures import (
 )
 
 
-logger = logging.getLogger(__name__)
 _bearer = HTTPBearer(auto_error=False)
 _STATION_ID = re.compile(r"^open-krl:[A-Z0-9]+$")
 _PROCESS_STARTED_AT = datetime.now(timezone.utc)
@@ -65,10 +66,12 @@ def _synthetic_fixture_mode_enabled() -> bool:
 def _settings_or_503() -> ApiSettings:
     try:
         return ApiSettings.from_env()
-    except ApiConfigurationError:
+    except ApiConfigurationError as exc:
+        record_failure("authentication", exc)
         raise ApiUnavailable from None
 
 
+@observe_sync("authentication")
 def _require_auth(
     credentials: Annotated[
         HTTPAuthorizationCredentials | None, Depends(_bearer)
@@ -90,6 +93,7 @@ def _require_auth(
     return settings
 
 
+@observe_sync("row_mapping")
 def _item(row: dict[str, object]) -> DisruptionItem:
     event_kind = row["event_kind"]
     if event_kind not in {"station", "segment"}:
@@ -132,8 +136,15 @@ def _item(row: dict[str, object]) -> DisruptionItem:
     )
 
 
+@observe_sync("response_validation")
+def _feed(**values) -> DisruptionFeed:
+    feed = DisruptionFeed(**values)
+    set_category(feed.availability)
+    return feed
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(
+    app = ObservedFastAPI(
         title="Mooby App API",
         version="0.1.0",
         docs_url=None,
@@ -158,10 +169,12 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/health/live")
+    @observe_sync("endpoint_execution")
     def live() -> dict[str, str]:
         return {"api": "available"}
 
     @app.get("/health/ready", response_model=Readiness)
+    @observe_sync("endpoint_execution")
     def ready(settings: Annotated[ApiSettings, Depends(_require_auth)]) -> Readiness:
         database_available = check_database(
             database_url=settings.database_url,
@@ -190,6 +203,7 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/api/v1/mock/disruptions", response_model=DisruptionFeed)
+    @observe_sync("endpoint_execution")
     def mock_disruptions(
         settings: Annotated[ApiSettings, Depends(_require_auth)],
         station_ids: Annotated[list[str], Query(min_length=1, max_length=30)],
@@ -208,7 +222,7 @@ def create_app() -> FastAPI:
             )
             items = [record.item for record in page.items[:limit]]
             has_more = len(page.items) > limit
-            return DisruptionFeed(
+            return _feed(
                 availability="results" if items else "no_match",
                 generated_at=page.generated_at,
                 message=(
@@ -222,10 +236,10 @@ def create_app() -> FastAPI:
                 next_offset=offset + limit if has_more else None,
             )
         except (ApiUnavailable, SyntheticFixtureUnavailable) as exc:
-            logger.warning("synthetic app_api feed unavailable (%s)", type(exc).__name__)
+            record_failure("fixture_read", exc)
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content=DisruptionFeed(
+                content=_feed(
                     availability="source_unavailable",
                     generated_at=None,
                     message="Fixture simulasi tidak tersedia. Coba lagi.",
@@ -236,6 +250,7 @@ def create_app() -> FastAPI:
             )
 
     @app.get("/api/v1/disruptions", response_model=DisruptionFeed)
+    @observe_sync("endpoint_execution")
     def disruptions(
         settings: Annotated[ApiSettings, Depends(_require_auth)],
         station_ids: Annotated[list[str], Query(min_length=1, max_length=30)],
@@ -248,21 +263,22 @@ def create_app() -> FastAPI:
                 detail={"code": "invalid_station_id"},
             )
         try:
-            page = fetch_disruptions(
-                database_url=settings.database_url,
-                station_ids=station_ids,
-                limit=limit,
-                offset=offset,
-                connect_timeout_seconds=settings.connect_timeout_seconds,
-                statement_timeout_ms=settings.statement_timeout_ms,
-            )
+            with timed_stage("feed_read"):
+                page = fetch_disruptions(
+                    database_url=settings.database_url,
+                    station_ids=station_ids,
+                    limit=limit,
+                    offset=offset,
+                    connect_timeout_seconds=settings.connect_timeout_seconds,
+                    statement_timeout_ms=settings.statement_timeout_ms,
+                )
             has_more = len(page.rows) > limit
             items = [_item(row) for row in page.rows[:limit]]
         except (psycopg.Error, OSError, ValidationError, KeyError, TypeError, ValueError) as exc:
-            logger.warning("app_api read failed (%s)", type(exc).__name__)
+            record_failure("feed_read", exc)
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content=DisruptionFeed(
+                content=_feed(
                     availability="source_unavailable",
                     generated_at=None,
                     message="Informasi gangguan belum dapat diperiksa. Coba lagi.",
@@ -272,7 +288,7 @@ def create_app() -> FastAPI:
                 ).model_dump(mode="json"),
             )
         if items:
-            return DisruptionFeed(
+            return _feed(
                 availability="results",
                 generated_at=page.generated_at,
                 message="Laporan gangguan yang cocok ditemukan.",
@@ -281,7 +297,7 @@ def create_app() -> FastAPI:
                 offset=offset,
                 next_offset=offset + limit if has_more else None,
             )
-        return DisruptionFeed(
+        return _feed(
             availability="no_match",
             generated_at=page.generated_at,
             message="Tidak ditemukan laporan gangguan yang cocok dalam 24 jam terakhir.",

@@ -9,6 +9,13 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from mooby.api.observability import observe_sync, timed_stage
+
+
+@observe_sync("database_connect")
+def _connect(*args, **kwargs):
+    return psycopg.connect(*args, **kwargs)
+
 
 @dataclass(frozen=True)
 class FeedPage:
@@ -61,20 +68,22 @@ def fetch_disruptions(
     connect_timeout_seconds: int,
     statement_timeout_ms: int,
 ) -> FeedPage:
-    with psycopg.connect(
+    with timed_stage("database_session"), _connect(
         database_url,
         connect_timeout=connect_timeout_seconds,
         row_factory=dict_row,
         options=f"-c statement_timeout={statement_timeout_ms}",
     ) as conn:
         with conn.transaction():
-            generated_at = conn.execute(
-                "SELECT transaction_timestamp() AS generated_at"
-            ).fetchone()["generated_at"]
-            rows = conn.execute(
-                _SEARCH_SQL,
-                (station_ids, limit + 1, offset),
-            ).fetchall()
+            with timed_stage("database_timestamp"):
+                generated_at = conn.execute(
+                    "SELECT transaction_timestamp() AS generated_at"
+                ).fetchone()["generated_at"]
+            with timed_stage("database_feed"):
+                rows = conn.execute(
+                    _SEARCH_SQL,
+                    (station_ids, limit + 1, offset),
+                ).fetchall()
     return FeedPage(generated_at=generated_at, rows=[dict(row) for row in rows])
 
 
@@ -82,13 +91,14 @@ def check_database(
     *, database_url: str, connect_timeout_seconds: int, statement_timeout_ms: int
 ) -> bool:
     try:
-        with psycopg.connect(
+        with timed_stage("database_session"), _connect(
             database_url,
             connect_timeout=connect_timeout_seconds,
             row_factory=dict_row,
             options=f"-c statement_timeout={statement_timeout_ms}",
         ) as conn:
-            conn.execute("SELECT transaction_timestamp()").fetchone()
+            with timed_stage("database_readiness"):
+                conn.execute("SELECT transaction_timestamp()").fetchone()
         return True
     except psycopg.Error:
         return False
@@ -98,15 +108,16 @@ def check_app_api_projection(
     *, database_url: str, connect_timeout_seconds: int, statement_timeout_ms: int
 ) -> bool:
     try:
-        with psycopg.connect(
+        with timed_stage("database_session"), _connect(
             database_url,
             connect_timeout=connect_timeout_seconds,
             row_factory=dict_row,
             options=f"-c statement_timeout={statement_timeout_ms}",
         ) as conn:
-            conn.execute(
-                "SELECT public_event_id FROM app_api.published_disruptions LIMIT 1"
-            ).fetchone()
+            with timed_stage("projection_readiness"):
+                conn.execute(
+                    "SELECT public_event_id FROM app_api.published_disruptions LIMIT 1"
+                ).fetchone()
         return True
     except psycopg.Error:
         return False
