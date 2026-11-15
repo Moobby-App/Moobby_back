@@ -6,6 +6,7 @@ import hmac
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -18,17 +19,19 @@ from mooby.api.observability import (
     ObservedFastAPI, observe_sync, record_failure, set_category, timed_stage,
 )
 from mooby.api.models import (
-    AppSource,
     DisruptionFeed,
     DisruptionItem,
     Readiness,
-    StationOrSegment,
 )
 from mooby.api.repository import (
     READ_ERRORS,
     check_app_api_projection,
     check_database,
     fetch_disruptions,
+)
+from mooby.api.response_preparation import (
+    FeedQuery, ReadinessStatus, load_feed, prepare_feed, prepare_item,
+    prepare_readiness, probe_readiness,
 )
 from mooby.api.synthetic_fixtures import (
     SyntheticFixtureUnavailable,
@@ -97,45 +100,7 @@ def _require_auth(
 
 @observe_sync("row_mapping")
 def _item(row: dict[str, object]) -> DisruptionItem:
-    event_kind = row["event_kind"]
-    if event_kind not in {"station", "segment"}:
-        raise ValueError("unsupported event kind in app_api projection")
-    location = (
-        StationOrSegment(
-            kind="station",
-            station=row["station_name"],
-            station_id=row["station_id"],
-            affected_station_ids=row["affected_station_ids"],
-        )
-        if event_kind == "station"
-        else StationOrSegment(
-            kind="segment",
-            line=row["line_name"],
-            start_station=row["start_station_name"],
-            start_station_id=row["start_station_id"],
-            end_station=row["end_station_name"],
-            end_station_id=row["end_station_id"],
-            direction=row["direction"],
-            affected_station_ids=row["affected_station_ids"],
-        )
-    )
-    return DisruptionItem(
-        public_event_id=row["public_event_id"],
-        title=row["title"],
-        summary=row["summary"],
-        original_text=row.get("original_text"),
-        station_or_segment=location,
-        severity=row["severity"],
-        event_time=row["event_at"],
-        event_time_certainty=row["event_time_certainty"],
-        freshness=row["freshness"],
-        certainty=row["certainty_label"],
-        source=AppSource(
-            display_name=row["source_display_name"],
-            url=row["source_url"],
-            published_at=row["source_published_at"],
-        ),
-    )
+    return prepare_item(row)
 
 
 @observe_sync("response_validation")
@@ -170,8 +135,7 @@ def _error_pagination(request: Request) -> tuple[int, int]:
 
 
 def _readiness_result(database: bool, projection: bool) -> Readiness | JSONResponse:
-    result = Readiness(database="available" if database else "unavailable",
-                       app_api_projection="available" if projection else "unavailable")
+    result = prepare_readiness(ReadinessStatus(database, projection))
     if not database or not projection:
         return JSONResponse(status_code=503, content=result.model_dump(mode="json"))
     return result
@@ -200,21 +164,20 @@ def create_app() -> FastAPI:
     @app.get("/health/ready", response_model=Readiness)
     @observe_sync("endpoint_execution")
     def ready(settings: Annotated[ApiSettings, Depends(_require_auth)]) -> Readiness | JSONResponse:
-        database_available = projection_available = False
-        try:
-            database_available = check_database(
+        state = probe_readiness(
+            database_probe=partial(check_database,
                 database_url=settings.database_url,
                 connect_timeout_seconds=settings.connect_timeout_seconds,
                 statement_timeout_ms=settings.statement_timeout_ms,
-            )
-            projection_available = database_available and check_app_api_projection(
+            ),
+            projection_probe=partial(check_app_api_projection,
                 database_url=settings.database_url,
                 connect_timeout_seconds=settings.connect_timeout_seconds,
                 statement_timeout_ms=settings.statement_timeout_ms,
-            )
-        except READ_ERRORS as exc:
-            record_failure("projection_readiness" if database_available else "database_readiness", exc)
-        return _readiness_result(database_available, projection_available)
+            ),
+            on_failure=record_failure,
+        )
+        return _readiness_result(state.database_available, state.projection_available)
 
     @app.get("/api/v1/mock/disruptions", response_model=DisruptionFeed)
     @observe_sync("endpoint_execution")
@@ -277,25 +240,15 @@ def create_app() -> FastAPI:
                 detail={"code": "invalid_station_id"},
             )
         try:
-            with timed_stage("feed_read"):
-                page = fetch_disruptions(
-                    database_url=settings.database_url,
-                    station_ids=station_ids,
-                    limit=limit,
-                    offset=offset,
-                    connect_timeout_seconds=settings.connect_timeout_seconds,
-                    statement_timeout_ms=settings.statement_timeout_ms,
-                )
-            has_more = len(page.rows) > limit
-            items = [_item(row) for row in page.rows[:limit]]
-            return _feed(
-                availability="results" if items else "no_match",
-                generated_at=page.generated_at,
-                message=("Laporan gangguan yang cocok ditemukan." if items else
-                         "Tidak ditemukan laporan gangguan yang cocok dalam 24 jam terakhir."),
-                items=items, limit=limit, offset=offset,
-                next_offset=offset + limit if has_more else None,
+            query = FeedQuery(tuple(station_ids), limit, offset)
+            reader = partial(fetch_disruptions,
+                database_url=settings.database_url,
+                connect_timeout_seconds=settings.connect_timeout_seconds,
+                statement_timeout_ms=settings.statement_timeout_ms,
             )
+            with timed_stage("feed_read"):
+                page = load_feed(query, reader=reader)
+            return prepare_feed(query, page, item_mapper=_item, feed_builder=_feed)
         except READ_ERRORS as exc:
             record_failure("feed_read", exc)
             return _unavailable_feed(limit, offset)
