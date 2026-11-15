@@ -7,6 +7,7 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from functools import partial
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -15,6 +16,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import Field, TypeAdapter, ValidationError
 
 from mooby.api.config import ApiConfigurationError, ApiSettings
+from mooby.api.feed_cache import RedisFeedCache
+from mooby.api.push_devices import device_router
 from mooby.api.observability import (
     ObservedFastAPI, observe_sync, record_failure, set_category, timed_stage,
 )
@@ -142,12 +145,22 @@ def _readiness_result(database: bool, projection: bool) -> Readiness | JSONRespo
 
 
 def create_app() -> FastAPI:
+    feed_cache = RedisFeedCache.from_env()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        try:
+            yield
+        finally:
+            feed_cache.close()
+
     app = ObservedFastAPI(
         title="Mooby App API",
         version="0.1.0",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
 
     @app.exception_handler(ApiUnavailable)
@@ -241,6 +254,9 @@ def create_app() -> FastAPI:
             )
         try:
             query = FeedQuery(tuple(station_ids), limit, offset)
+            cached = feed_cache.get(settings.database_url, query)
+            if cached is not None:
+                return _feed(**cached.model_dump())
             reader = partial(fetch_disruptions,
                 database_url=settings.database_url,
                 connect_timeout_seconds=settings.connect_timeout_seconds,
@@ -248,11 +264,18 @@ def create_app() -> FastAPI:
             )
             with timed_stage("feed_read"):
                 page = load_feed(query, reader=reader)
-            return prepare_feed(query, page, item_mapper=_item, feed_builder=_feed)
+            result = prepare_feed(query, page, item_mapper=_item, feed_builder=_feed)
+            # Include lookahead: its expiry can change next_offset as well.
+            expiry_times = [row['cache_expires_at'].timestamp()
+                            for row in page.rows if row.get('cache_expires_at') is not None]
+            feed_cache.put(settings.database_url, query, result,
+                           valid_until=min(expiry_times) if expiry_times else None)
+            return result
         except READ_ERRORS as exc:
             record_failure("feed_read", exc)
             return _unavailable_feed(limit, offset)
 
+    app.include_router(device_router(_require_auth))
     return app
 
 

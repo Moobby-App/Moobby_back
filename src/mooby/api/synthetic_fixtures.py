@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from functools import lru_cache
@@ -13,6 +13,7 @@ from typing import Sequence
 from uuid import NAMESPACE_URL, uuid5
 
 from mooby.api.models import AppSource, DisruptionItem, StationOrSegment
+from mooby.api.publication_policy import SEVERITY_TTL_MINUTES
 from mooby.db.source_reader import SourceSnapshot, StationReference
 from mooby.worker.classifier import ClassifierAdapter
 from mooby.worker.event_persistence import DraftEvent
@@ -134,6 +135,8 @@ def _item_from_draft(
             original_text=draft.raw_text,
             station_or_segment=location,
             severity=draft.severity,
+            expires_at=generated_at + timedelta(
+                minutes=SEVERITY_TTL_MINUTES.get(draft.severity, 30)),
             event_time=draft.event_at,
             event_time_certainty=draft.event_time_certainty,
             freshness="fresh",

@@ -11,11 +11,13 @@ dependencies = [
     "pydantic==2.14.3",
     "psycopg[binary]>=3,<4",
     "scikit-learn==1.9.1",
+    "redis==6.4.0",
     "uvicorn[standard]==0.54.0",
 ]
 
 [project.optional-dependencies]
 embedding = ["sentence-transformers==5.1.2"]
+push = ["httpx[http2]>=0.28,<1", "PyJWT[crypto]>=2.10,<3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

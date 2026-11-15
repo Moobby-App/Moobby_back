@@ -76,7 +76,7 @@ class FeedPreparationTests(IsolatedPreparationCase):
         result = prep.prepare_feed(self.query(7,3), repository.FeedPage(NOW, []))
         self.assertEqual(result.model_dump(mode="json"), {
             "availability":"no_match", "generated_at":"2026-11-15T01:02:03Z",
-            "window_hours":24, "message":"Tidak ditemukan laporan gangguan yang cocok dalam 24 jam terakhir.",
+            "window_hours":3, "message":"Tidak ditemukan laporan gangguan aktif yang cocok untuk rute ini.",
             "items":[], "limit":7, "offset":3, "next_offset":None,
         })
         self.assertIs(result.generated_at, NOW)
@@ -85,7 +85,7 @@ class FeedPreparationTests(IsolatedPreparationCase):
         result = prep.prepare_feed(self.query(), repository.FeedPage(NOW, [row()]))
         item = result.model_dump(mode="json")["items"][0]
         self.assertEqual(set(item), {"public_event_id", "title", "summary", "original_text",
-            "station_or_segment", "severity", "event_time", "event_time_certainty", "freshness", "certainty", "source"})
+            "station_or_segment", "severity", "expires_at", "event_time", "event_time_certainty", "freshness", "certainty", "source"})
         self.assertEqual(item["station_or_segment"], {
             "kind":"station", "line":None, "station":"Serpong", "station_id":"open-krl:SRP",
             "start_station":None, "start_station_id":None, "end_station":None,

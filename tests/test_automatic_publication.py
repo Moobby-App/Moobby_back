@@ -204,7 +204,7 @@ class AutomaticPublicationTests(unittest.TestCase):
         self.assertEqual(payload['availability'], 'results')
         item = payload['items'][0]
         self.assertEqual(item['station_or_segment']['affected_station_ids'], ['open-krl:BOO'])
-        self.assertEqual(set(item), {'public_event_id','title','summary','station_or_segment',
+        self.assertEqual(set(item), {'public_event_id','title','summary','station_or_segment','expires_at',
             'severity','event_time','event_time_certainty','freshness','certainty','source','original_text'})
         self.assertEqual(item['original_text'], draft.raw_text)
         self.assertEqual(set(item['source']), {'display_name', 'url', 'published_at'})

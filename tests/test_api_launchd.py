@@ -23,6 +23,29 @@ TOKEN = 'PRIVATE_BEARER_' + 'x'*32
 
 
 class ApiLaunchdTests(unittest.TestCase):
+    def test_push_registration_config_excludes_signing_and_sender_secrets(self):
+        env=self.timeout_environment([
+            'MOOBY_PUSH_REGISTRATION_ENABLED=1',
+            'MOOBY_PUSH_API_DATABASE_URL=postgresql://registration',
+            'MOOBY_APNS_ENVIRONMENT=sandbox','MOOBY_APNS_TOPIC=id.moobby.app',
+            'MOOBY_APNS_ENABLED=1','MOOBY_APNS_KEY_PATH=/PRIVATE.p8',
+            'MOOBY_PUSH_SENDER_DATABASE_URL=postgresql://PRIVATE',
+        ])
+        self.assertEqual(env['MOOBY_APNS_TOPIC'],'id.moobby.app')
+        self.assertEqual(env['MOOBY_PUSH_REGISTRATION_ENABLED'],'1')
+        for key in ('MOOBY_APNS_ENABLED','MOOBY_APNS_KEY_PATH','MOOBY_PUSH_SENDER_DATABASE_URL'):
+            self.assertNotIn(key,env)
+
+    def test_redis_settings_forwarded_only_from_local_env(self):
+        with patch.dict('os.environ', {'APP_API_REDIS_URL':'redis://parent:6379/0'}):
+            self.assertNotIn('APP_API_REDIS_URL', self.timeout_environment())
+            env = self.timeout_environment([
+                'APP_API_REDIS_URL=redis://127.0.0.1:6379/0',
+                'APP_API_REDIS_TTL_SECONDS=5',
+            ])
+        self.assertEqual(env['APP_API_REDIS_URL'], 'redis://127.0.0.1:6379/0')
+        self.assertEqual(env['APP_API_REDIS_TTL_SECONDS'], '5')
+
     def timeout_environment(self, entries=(), settings=None):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)/'.env'

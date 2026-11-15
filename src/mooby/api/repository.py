@@ -11,6 +11,7 @@ from psycopg.rows import dict_row
 from pydantic import ValidationError
 
 from mooby.api.observability import observe_sync, timed_stage
+from mooby.api.publication_policy import TTL_SQL
 
 READ_ERRORS = (psycopg.Error, OSError, ValidationError, KeyError, TypeError, ValueError)
 
@@ -26,7 +27,7 @@ class FeedPage:
     rows: list[dict[str, Any]]
 
 
-_SEARCH_SQL = """
+_SEARCH_SQL = f"""
 SELECT
     v.public_event_id,
     v.event_kind,
@@ -38,6 +39,7 @@ SELECT
     v.event_time_certainty,
     v.certainty_label,
     v.freshness_anchor_at,
+    v.freshness_anchor_at + ({TTL_SQL}) AS cache_expires_at,
     CASE
         WHEN v.freshness_anchor_at >= transaction_timestamp() - interval '8 hours'
             THEN 'fresh'
@@ -57,6 +59,8 @@ SELECT
     v.source_published_at
 FROM app_api.published_disruptions AS v
 WHERE v.affected_station_ids && %s::text[]
+  AND v.freshness_anchor_at <= transaction_timestamp()
+  AND v.freshness_anchor_at + ({TTL_SQL}) > transaction_timestamp()
 ORDER BY v.freshness_anchor_at DESC, v.public_event_id
 LIMIT %s OFFSET %s
 """

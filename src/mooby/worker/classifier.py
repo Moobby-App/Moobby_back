@@ -1,4 +1,4 @@
-"""Validated adapter for the private scikit-learn baseline artifacts."""
+"""Validated adapter for configured private scikit-learn classifier artifacts."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+from .model_config import ACTIVE_CLASSIFIER_ARTIFACT_DIR
 
 EXPECTED_CLASSES = {
     "relevance": frozenset({"disruption", "not_disruption"}),
@@ -49,10 +50,7 @@ class ClassifierAdapter:
     @classmethod
     def load(cls, artifact_dir: Path | None = None) -> ClassifierAdapter:
         if artifact_dir is None:
-            artifact_dir = (
-                Path(__file__).resolve().parents[3]
-                / "evaluation/private/Scrape_Manual/baseline_artifacts"
-            )
+            artifact_dir = ACTIVE_CLASSIFIER_ARTIFACT_DIR
 
         metrics_path = artifact_dir / "metrics.json"
         relevance_path = artifact_dir / "relevance_tfidf_logreg.joblib"
@@ -67,6 +65,32 @@ class ClassifierAdapter:
                 raise ValueError("invalid experiment version")
             if not isinstance(recorded_sklearn_version, str):
                 raise ValueError("missing scikit-learn version")
+            # Explicit old packages remain loadable with their legacy filenames.
+            model_files = metrics.get("model_files", {})
+            filenames = {
+                "relevance": model_files.get("relevance", relevance_path.name),
+                "severity": model_files.get("severity", severity_path.name),
+            }
+            if any(
+                not isinstance(name, str) or not name
+                or name in {".", ".."} or "/" in name or "\\" in name
+                for name in filenames.values()
+            ):
+                raise ValueError("invalid model filename")
+            relevance_path = artifact_dir / filenames["relevance"]
+            severity_path = artifact_dir / filenames["severity"]
+            relevance_payload, relevance_digest = cls._read_artifact(relevance_path)
+            severity_payload, severity_digest = cls._read_artifact(severity_path)
+            versions = metrics.get("model_versions", {})
+            relevance_version = versions.get("relevance", f"{experiment}:relevance")
+            severity_version = versions.get("severity", f"{experiment}:severity")
+            if any(not isinstance(v, str) or not v.strip()
+                   for v in (relevance_version, severity_version)):
+                raise ValueError("invalid model version")
+            expected_digests = metrics.get("artifact_sha256", {})
+            for key, digest in (("relevance", relevance_digest), ("severity", severity_digest)):
+                if key in expected_digests and expected_digests[key] != digest:
+                    raise ValueError(f"{key} artifact checksum mismatch")
         except Exception as exc:
             # Keep the adapter constructible so the claimed attempt can be
             # finished with a distinct model error instead of a decision.
@@ -92,11 +116,11 @@ class ClassifierAdapter:
             error_type = type(exc).__name__
             return cls(
                 _LoadedModel(
-                    "relevance", f"{experiment}:relevance", relevance_path,
+                    "relevance", relevance_version, relevance_path,
                     relevance_digest, None, error_type,
                 ),
                 _LoadedModel(
-                    "severity", f"{experiment}:severity", severity_path,
+                    "severity", severity_version, severity_path,
                     severity_digest, None, error_type,
                 ),
             )
@@ -104,14 +128,14 @@ class ClassifierAdapter:
         return cls(
             cls._load_one(
                 "relevance",
-                f"{experiment}:relevance",
+                relevance_version,
                 relevance_path,
                 relevance_payload,
                 relevance_digest,
             ),
             cls._load_one(
                 "severity",
-                f"{experiment}:severity",
+                severity_version,
                 severity_path,
                 severity_payload,
                 severity_digest,

@@ -62,6 +62,7 @@ class DisruptionItem(BaseModel):
     original_text: str | None = None
     station_or_segment: StationOrSegment
     severity: Severity | None = None
+    expires_at: datetime | None = None
     event_time: datetime | None = None
     event_time_certainty: Certainty | None = None
     freshness: Freshness
@@ -74,7 +75,7 @@ class DisruptionFeed(BaseModel):
 
     availability: Availability
     generated_at: datetime | None
-    window_hours: Literal[24] = 24
+    window_hours: Literal[3] = 3
     message: str
     items: list[DisruptionItem] = Field(default_factory=list)
     limit: int = Field(ge=1, le=50)

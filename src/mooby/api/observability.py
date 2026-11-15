@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 _EVENTS = frozenset({"request_admitted", "request_stage", "request_completed",
                      "request_failed", "request_cancelled", "request_aborted"})
 _ROUTES = frozenset({"/health/live", "/health/ready", "/api/v1/disruptions",
-                     "/api/v1/mock/disruptions"})
+                     "/api/v1/mock/disruptions", "/api/v1/push/devices/{installation_id}"})
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"})
 _STAGES = frozenset({"authentication", "endpoint_execution", "feed_read",
                      "database_connect", "database_session", "database_timestamp", "database_feed",

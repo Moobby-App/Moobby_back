@@ -69,6 +69,15 @@ def api_environment(settings, env_file=ROOT/'.env'):
     env = base_environment()
     env.update(api)
     env.update(timeouts)  # Preserve valid local values verbatim; absent keys use app defaults.
+    # Cache is optional and validated by the API; never inherit parent secrets.
+    for key in ('APP_API_REDIS_URL', 'APP_API_REDIS_TTL_SECONDS'):
+        if values.get(key) is not None:
+            env[key] = values[key]
+    # Registration only: APNs signing credentials never enter the API process.
+    for key in ('MOOBY_PUSH_REGISTRATION_ENABLED', 'MOOBY_PUSH_API_DATABASE_URL',
+                'MOOBY_APNS_ENVIRONMENT', 'MOOBY_APNS_TOPIC'):
+        if values.get(key) is not None:
+            env[key] = values[key]
     enabled = settings.get('mock_enabled', False)
     ttl = settings.get('mock_ttl_minutes', 60)
     if type(enabled) is not bool or type(ttl) is not int or not 1 <= ttl <= 240:

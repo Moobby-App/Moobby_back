@@ -85,6 +85,7 @@ def prepare_item(row: dict[str, Any]) -> DisruptionItem:
         original_text=row.get("original_text"),
         station_or_segment=location,
         severity=row["severity"],
+        expires_at=row.get("cache_expires_at"),
         event_time=row["event_at"],
         event_time_certainty=row["event_time_certainty"],
         freshness=row["freshness"],
@@ -115,7 +116,7 @@ def prepare_feed(
         availability="results" if items else "no_match",
         generated_at=page.generated_at,
         message=("Laporan gangguan yang cocok ditemukan." if items else
-                 "Tidak ditemukan laporan gangguan yang cocok dalam 24 jam terakhir."),
+                 "Tidak ditemukan laporan gangguan aktif yang cocok untuk rute ini."),
         items=items, limit=query.limit, offset=query.offset,
         next_offset=query.offset + query.limit if has_more else None,
     )
