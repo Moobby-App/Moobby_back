@@ -27,12 +27,19 @@ async with controller.admit(parent_deadline) as result:
 ```
 
 Normal internal outcomes are `accepted`, `queue_full`, `wait_expired`,
-`parent_deadline_expired` and `controller_closed`. Cancellation propagates as
-`AdmissionCancelled`, a subclass of `asyncio.CancelledError`, with controlled
-outcome `request_cancelled`. Cancellation is never converted into a normal return.
-Cancellation before the coroutine starts is ordinary asyncio cancellation.
-CancelledError messages are not copied into the controlled exception. The module
-does not log anything.
+`parent_deadline_expired` and `controller_closed`. Native `asyncio.CancelledError`
+propagates without replacement or suppression, both while queued and inside an
+accepted scope. An enclosing `asyncio.timeout()` can therefore translate its own
+cancellation into `TimeoutError`; external task cancellation remains cancellation.
+Cancellation is never converted into a normal result. The former custom
+`AdmissionCancelled` exception has been removed: no active routes used it, and it
+interfered with Python 3.12 timeout handling.
+
+`AdmissionOutcome.CANCELLED` (`request_cancelled`) remains a classification label
+for future callers catching native cancellation, not a raised exception or a
+returned admission result. Callers must re-raise cancellation after classifying
+it. Native exception messages are preserved, so diagnostics must use this fixed
+label and never log the exception or its message. This module does not log.
 
 Accepted results own a lease. Context exit releases it on success, exception or
 cancellation, without awaiting cleanup. Explicit `lease.release()` is idempotent:
@@ -53,8 +60,11 @@ but expiry is checked against the absolute deadline; early timers are rearmed
 with remaining time, never a fresh full allowance. Tests can inject the parent
 clock and control timer delivery without arbitrary sleeps.
 
-Expired parents are rejected even when capacity is free. Otherwise, free capacity
-admits immediately; zero-waiting mode rejects occupied capacity as `queue_full`.
+Expired parents are rejected even when capacity is free. Immediate admission
+checks the parent again after child-deadline creation and queue draining, directly
+before granting the lease, with no intervening await. Clock advancement during
+those operations cannot bypass this final check. Otherwise, free capacity admits
+immediately; zero-waiting mode rejects occupied capacity as `queue_full`.
 Waiting is bounded by the earlier of parent expiry and admission expiry. Parent
 expiry wins ties. Closure takes precedence over expiry for queued requests.
 
@@ -63,8 +73,10 @@ new callers cannot bypass existing waiters. A released slot is reserved before i
 waiter resumes. If that waiter is cancelled, expires or observes closure before
 entry, the reserved lease is reclaimed and passed onward. Context exit releases
 capacity if cancellation occurs after entry. Late timer callbacks cannot revoke
-a delivered lease. Normal asyncio scheduling latency still applies; this is not
-a hard real-time deadline or an execution deadline after admission.
+a delivered lease. The clock can still advance after the final decision; there
+is no atomic real-time clock/slot operation. Normal asyncio scheduling latency
+still applies; this is not a hard real-time deadline or an execution deadline
+after admission.
 
 `close()` is synchronous and idempotent. It prevents new admissions, wakes all
 queued waiters as closed and cancels their timers. Already entered active scopes

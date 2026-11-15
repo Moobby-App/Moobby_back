@@ -7,7 +7,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from mooby.api.admission import AdmissionCancelled, AdmissionController, AdmissionLease, AdmissionOutcome
+from mooby.api.admission import AdmissionController, AdmissionLease, AdmissionOutcome
 from mooby.api.deadline_policy import Deadline, DeadlinePolicy
 
 
@@ -138,6 +138,102 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
         async with controller.admit(self.parent(seconds=0)) as result:
             self.assertEqual(result.outcome, AdmissionOutcome.PARENT_EXPIRED)
 
+    async def test_timeout_zero_around_immediate_admission_releases_capacity(self):
+        controller = self.controller()
+        with self.assertRaises(TimeoutError):
+            async with asyncio.timeout(0):
+                async with controller.admit(self.parent()) as result:
+                    self.assertTrue(result.accepted)
+                    await asyncio.Event().wait()
+        self.assertEqual(controller.snapshot().active_jobs, 0)
+        async with controller.admit(self.parent()) as next_result:
+            self.assertTrue(next_result.accepted)
+
+    async def test_enclosing_timeout_while_queued_preserves_timeout_error(self):
+        controller = self.controller()
+        loop = asyncio.get_running_loop()
+        scope_ready = loop.create_future()
+
+        async def job():
+            async with asyncio.timeout(None) as scope:
+                scope_ready.set_result(scope)
+                async with controller.admit(self.parent()):
+                    self.fail("queued request entered after enclosing timeout")
+
+        async with controller.admit(self.parent()):
+            task = asyncio.create_task(job())
+            scope = await scope_ready
+            self.assertEqual(controller.snapshot().waiting_jobs, 1)
+            scope.reschedule(loop.time())  # Deterministic expiry after queue entry.
+            with self.assertRaises(TimeoutError):
+                await task
+            self.assertEqual(controller.snapshot().waiting_jobs, 0)
+            self.assertEqual(controller.snapshot().active_jobs, 1)
+            self.assertFalse(task.cancelled())  # Timeout is an ordinary exception.
+
+    async def test_native_cancellation_exception_identity_survives_scope_exit(self):
+        controller = self.controller()
+        entered, never = asyncio.Event(), asyncio.Event()
+        original = []
+
+        async def job():
+            async with controller.admit(self.parent()):
+                entered.set()
+                try:
+                    await never.wait()
+                except asyncio.CancelledError as error:
+                    original.append(error)
+                    raise
+
+        task = asyncio.create_task(job())
+        await entered.wait()
+        task.cancel("local-test-cancellation")
+        with self.assertRaises(asyncio.CancelledError) as caught:
+            await task
+        self.assertIs(type(caught.exception), asyncio.CancelledError)
+        self.assertIs(caught.exception, original[0])
+        self.assertEqual(caught.exception.args, ("local-test-cancellation",))
+        self.assertTrue(task.cancelled())
+
+    async def test_parent_expiry_during_child_creation_rejects_immediate_grant(self):
+        controller = self.controller()
+        readings = iter((100.0, 102.0))
+        parent = Deadline(101.0, lambda: next(readings, 102.0))
+        with patch.object(controller, "_new_lease", wraps=controller._new_lease) as grant:
+            async with controller.admit(parent) as result:
+                self.assertEqual(result.outcome, AdmissionOutcome.PARENT_EXPIRED)
+                self.assertIsNone(result.lease)
+            grant.assert_not_called()
+
+    async def test_parent_expiry_at_final_clock_boundary_rejects_immediate_grant(self):
+        controller = self.controller()
+        readings = iter((100.0, 100.5, 101.0))
+        parent = Deadline(101.0, lambda: next(readings, 101.0))
+        async with controller.admit(parent) as result:
+            self.assertEqual(result.outcome, AdmissionOutcome.PARENT_EXPIRED)
+            self.assertIsNone(result.lease)
+
+    async def test_clock_advancement_during_drain_is_checked_before_slot_grant(self):
+        controller, clock = self.controller(), Clock()
+        parent = self.parent(clock, 1)
+        drain = controller._drain
+
+        def advance_after_drain():
+            drain()
+            clock.now = 102.0
+
+        with patch.object(controller, "_drain", side_effect=advance_after_drain):
+            async with controller.admit(parent) as result:
+                self.assertEqual(result.outcome, AdmissionOutcome.PARENT_EXPIRED)
+                self.assertIsNone(result.lease)
+
+    async def test_valid_advancing_clock_still_allows_immediate_grant(self):
+        controller = self.controller()
+        readings = iter((100.0, 100.5, 100.9))
+        parent = Deadline(101.0, lambda: next(readings, 100.9))
+        async with controller.admit(parent) as result:
+            self.assertTrue(result.accepted)
+
     async def test_real_event_loop_admission_timer(self):
         controller = self.controller(admission_wait_ms=1)
         async with controller.admit(self.parent()):
@@ -217,9 +313,9 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
                 self.fail("pending cancellation accepted")
 
         task = asyncio.create_task(job())
-        with self.assertRaises(AdmissionCancelled) as error:
+        with self.assertRaises(asyncio.CancelledError) as error:
             await task
-        self.assertEqual(error.exception.outcome, AdmissionOutcome.CANCELLED)
+        self.assertIs(type(error.exception), asyncio.CancelledError)
 
     async def test_cancel_queued_waiter_frees_waiting_capacity(self):
         controller = self.controller(max_waiting_jobs=1)
@@ -227,10 +323,11 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
         async with controller.admit(self.parent()):
             with patcher:
                 task, _, _, _ = await self.start_job(controller)
-                task.cancel("PRIVATE cancellation message")
-                with self.assertRaises(AdmissionCancelled) as error:
+                task.cancel("local-test-cancellation")
+                with self.assertRaises(asyncio.CancelledError) as error:
                     await task
-            self.assertNotIn("PRIVATE", str(error.exception))
+            self.assertIs(type(error.exception), asyncio.CancelledError)
+            self.assertEqual(error.exception.args, ("local-test-cancellation",))
             self.assertTrue(handles[0].cancelled)
             self.assertEqual(controller.snapshot().waiting_jobs, 0)
             next_task, _, _, _ = await self.start_job(controller)
@@ -244,7 +341,7 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
             owner.lease.release()  # reserves an active lease for the waiting task
             self.assertEqual(controller.snapshot().active_jobs, 1)
             task.cancel()
-            with self.assertRaises(AdmissionCancelled):
+            with self.assertRaises(asyncio.CancelledError):
                 await task
             self.assertEqual(controller.snapshot().active_jobs, 0)
 
@@ -253,7 +350,7 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
         task, entered, _, _ = await self.start_job(controller)
         await entered.wait()
         task.cancel()
-        with self.assertRaises(AdmissionCancelled):
+        with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertTrue(task.cancelled())
 
@@ -264,7 +361,7 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
             owner.lease.release()
             task.cancel()
             task.cancel()
-            with self.assertRaises(AdmissionCancelled):
+            with self.assertRaises(asyncio.CancelledError):
                 await task
 
     async def test_repeated_release_is_idempotent(self):
@@ -329,7 +426,7 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
             first[0].cancel()
             # Cancellation is scheduled but its cleanup has not resumed yet.
             owner.lease.release()
-            with self.assertRaises(AdmissionCancelled):
+            with self.assertRaises(asyncio.CancelledError):
                 await first[0]
             await second[1].wait()
             second[2].set()
@@ -401,7 +498,7 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
         controller.close()
         self.assertEqual(controller.snapshot().active_jobs, 1)
         task.cancel()
-        with self.assertRaises(AdmissionCancelled):
+        with self.assertRaises(asyncio.CancelledError):
             await task
         state = controller.snapshot()
         self.assertEqual((state.active_jobs, state.waiting_jobs, state.closed), (0, 0, True))
@@ -413,7 +510,7 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
             task.cancel()
             controller.close()
             owner.lease.release()
-            with self.assertRaises(AdmissionCancelled):
+            with self.assertRaises(asyncio.CancelledError):
                 await task
 
     async def test_late_timeout_after_successful_handoff_is_harmless(self):

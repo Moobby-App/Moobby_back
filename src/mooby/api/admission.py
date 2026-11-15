@@ -25,12 +25,6 @@ class AdmissionOutcome(StrEnum):
     CANCELLED = "request_cancelled"
 
 
-class AdmissionCancelled(asyncio.CancelledError):
-    """Controlled cancellation which retains asyncio's cancellation semantics."""
-
-    outcome = AdmissionOutcome.CANCELLED
-
-
 @dataclass(frozen=True)
 class AdmissionState:
     active_jobs: int
@@ -108,18 +102,15 @@ class AdmissionController:
     async def admit(self, parent: Deadline) -> AsyncIterator[AdmissionResult]:
         """Yield an internal result; always release accepted capacity on exit.
 
-        Cancellation is re-raised as a CancelledError subtype, never returned as
-        an ordinary result. A caller must check result.accepted before doing work.
+        Native cancellation propagates unchanged, never as an ordinary result.
+        A caller must check result.accepted before doing work.
         """
+        result = await self._acquire(parent)
         try:
-            result = await self._acquire(parent)
-            try:
-                yield result
-            finally:
-                if result.lease is not None:
-                    result.lease.release()
-        except asyncio.CancelledError:
-            raise AdmissionCancelled() from None
+            yield result
+        finally:
+            if result.lease is not None:
+                result.lease.release()
 
     def _new_lease(self) -> AdmissionResult:
         lease = AdmissionLease(self)
@@ -197,6 +188,10 @@ class AdmissionController:
         deadline = parent.child(self._policy.admission_wait_ms / 1000)
         self._drain()
         if not self._waiters and len(self._active) < self._policy.max_active_jobs:
+            # Child creation/draining may have consumed the remaining budget.
+            # No suspension between this final decision and the slot grant.
+            if parent.expired():
+                return AdmissionResult(AdmissionOutcome.PARENT_EXPIRED)
             return self._new_lease()
         if len(self._waiters) >= self._policy.max_waiting_jobs:
             return AdmissionResult(AdmissionOutcome.QUEUE_FULL)
