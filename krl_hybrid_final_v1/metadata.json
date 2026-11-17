@@ -1,0 +1,48 @@
+{
+  "model_name": "KRL Hierarchical Hybrid TF-IDF",
+  "model_version": "1.0",
+  "architecture": "Two-stage hierarchical classification",
+  "stage1": "Word TF-IDF + LinearSVC",
+  "stage2": "Word + Character TF-IDF + LinearSVC",
+  "input_contract": "normalized_text",
+  "labels": [
+    "not_disruption",
+    "light",
+    "moderate",
+    "heavy"
+  ],
+  "training_samples": 1312,
+  "stage1_training_samples": 1312,
+  "stage2_training_samples": 559,
+  "label_distribution": {
+    "not_disruption": 753,
+    "light": 342,
+    "moderate": 151,
+    "heavy": 66
+  },
+  "hyperparameters": {
+    "word_ngram_range": [
+      1,
+      2
+    ],
+    "char_ngram_range": [
+      3,
+      5
+    ],
+    "min_df": 2,
+    "sublinear_tf": true,
+    "linear_svc_C": 1.0,
+    "class_weight": "balanced",
+    "random_state": 42
+  },
+  "python_version": "3.14.3",
+  "sklearn_version": "1.9.1",
+  "training_dataset_sha256": "beb4f7b8f8abeaa6d0fecfb0a47d094068b4919137bef18d4d26ac434e98249e",
+  "trained_at_utc": "2026-11-17T17:34:12.486112+00:00",
+  "evaluation": {
+    "method": "Exploratory event-aware 5-fold OOF",
+    "macro_f1": 0.7564,
+    "heavy_f1": 0.6055,
+    "note": "Historical OOF evaluation of the selected architecture, not evaluation of the final model fitted on all 1312 samples."
+  }
+}

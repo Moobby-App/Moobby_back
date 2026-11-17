@@ -1,240 +1,134 @@
-"""Validated adapter for configured private scikit-learn classifier artifacts."""
-
+"""Final Hybrid TF-IDF v1.0; no probability conversion or old-model fallback."""
 from __future__ import annotations
-
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
+import importlib.metadata
 import io
 import json
-import math
 from pathlib import Path
+import re
 from typing import Any
-
 from .model_config import ACTIVE_CLASSIFIER_ARTIFACT_DIR
 
-EXPECTED_CLASSES = {
-    "relevance": frozenset({"disruption", "not_disruption"}),
-    "severity": frozenset({"light", "moderate", "severe"}),
-}
+FINAL_LABELS = frozenset({'not_disruption', 'light', 'moderate', 'heavy'})
+STORAGE_SEVERITY = {'light': 'light', 'moderate': 'moderate', 'heavy': 'severe'}
 
 
 class ModelArtifactError(RuntimeError):
-    """A model could not be loaded or returned an invalid prediction."""
+    pass
+
+
+def normalize_model_text(text: str) -> str:
+    if not isinstance(text, str):
+        raise TypeError('Input must be a string.')
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _input(text: str) -> str:
+    normalized = normalize_model_text(text)
+    if not normalized:
+        raise ValueError('Tweet cannot be empty.')
+    return normalized
 
 
 @dataclass(frozen=True)
 class ModelPrediction:
     label: str
-    probabilities: dict[str, float]
-    confidence: float
+    probabilities: dict[str, float] | None
+    confidence: float | None
     model_version: str
     artifact_sha256: str
+    model_label: str | None = None
 
 
 @dataclass(frozen=True)
-class _LoadedModel:
-    key: str
-    version: str
-    path: Path
+class _LoadedStage:
+    estimator: Any = field(repr=False)
     digest: str | None
-    estimator: Any | None
-    error_type: str | None
+    error_type: str | None = None
 
 
 class ClassifierAdapter:
-    """Load each model once and validate class and prediction contracts."""
+    uses_probability_thresholds = False
 
-    def __init__(self, relevance: _LoadedModel, severity: _LoadedModel) -> None:
-        self._models = {"relevance": relevance, "severity": severity}
+    def __init__(self, stage1: _LoadedStage, stage2: _LoadedStage, version: str):
+        self.stage1, self.stage2, self.version = stage1, stage2, version
 
     @classmethod
     def load(cls, artifact_dir: Path | None = None) -> ClassifierAdapter:
-        if artifact_dir is None:
-            artifact_dir = ACTIVE_CLASSIFIER_ARTIFACT_DIR
-
-        metrics_path = artifact_dir / "metrics.json"
-        relevance_path = artifact_dir / "relevance_tfidf_logreg.joblib"
-        severity_path = artifact_dir / "severity_tfidf_logreg.joblib"
-        relevance_payload, relevance_digest = cls._read_artifact(relevance_path)
-        severity_payload, severity_digest = cls._read_artifact(severity_path)
+        directory = Path(artifact_dir) if artifact_dir is not None else ACTIVE_CLASSIFIER_ARTIFACT_DIR
+        digests = {}
+        version = 'krl_hybrid_final_v1:unavailable'
         try:
-            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-            experiment = metrics["experiment"]
-            recorded_sklearn_version = metrics["scikit_learn_version"]
-            if not isinstance(experiment, str) or not experiment.strip():
-                raise ValueError("invalid experiment version")
-            if not isinstance(recorded_sklearn_version, str):
-                raise ValueError("missing scikit-learn version")
-            # Explicit old packages remain loadable with their legacy filenames.
-            model_files = metrics.get("model_files", {})
-            filenames = {
-                "relevance": model_files.get("relevance", relevance_path.name),
-                "severity": model_files.get("severity", severity_path.name),
-            }
-            if any(
-                not isinstance(name, str) or not name
-                or name in {".", ".."} or "/" in name or "\\" in name
-                for name in filenames.values()
-            ):
-                raise ValueError("invalid model filename")
-            relevance_path = artifact_dir / filenames["relevance"]
-            severity_path = artifact_dir / filenames["severity"]
-            relevance_payload, relevance_digest = cls._read_artifact(relevance_path)
-            severity_payload, severity_digest = cls._read_artifact(severity_path)
-            versions = metrics.get("model_versions", {})
-            relevance_version = versions.get("relevance", f"{experiment}:relevance")
-            severity_version = versions.get("severity", f"{experiment}:severity")
-            if any(not isinstance(v, str) or not v.strip()
-                   for v in (relevance_version, severity_version)):
-                raise ValueError("invalid model version")
-            expected_digests = metrics.get("artifact_sha256", {})
-            for key, digest in (("relevance", relevance_digest), ("severity", severity_digest)):
-                if key in expected_digests and expected_digests[key] != digest:
-                    raise ValueError(f"{key} artifact checksum mismatch")
-        except Exception as exc:
-            # Keep the adapter constructible so the claimed attempt can be
-            # finished with a distinct model error instead of a decision.
-            error_type = type(exc).__name__
-            return cls(
-                _LoadedModel(
-                    "relevance", "unavailable", relevance_path,
-                    relevance_digest, None, error_type,
-                ),
-                _LoadedModel(
-                    "severity", "unavailable", severity_path,
-                    severity_digest, None, error_type,
-                ),
-            )
-
-        try:
-            import sklearn
+            manifest = json.loads((directory / 'artifact_manifest.json').read_text())
+            metadata = json.loads((directory / 'metadata.json').read_text())
+            if metadata['model_version'] != '1.0' or set(metadata['labels']) != FINAL_LABELS:
+                raise ValueError('unsupported model metadata')
+            version = 'krl_hybrid_final_v1.0'
+            for package, expected in manifest['runtime_requirements'].items():
+                if importlib.metadata.version(package) != expected:
+                    raise RuntimeError('classifier dependency mismatch')
+            payloads = {}
+            for name in ('metadata.json', 'requirements.txt', 'stage1.joblib', 'stage2.joblib'):
+                payload = (directory / name).read_bytes()
+                digest = hashlib.sha256(payload).hexdigest()
+                if manifest['sha256'][name] != digest:
+                    raise ValueError('classifier artifact checksum mismatch')
+                payloads[name], digests[name] = payload, digest
             import joblib
-
-            if sklearn.__version__ != recorded_sklearn_version:
-                raise RuntimeError("scikit-learn runtime version mismatch")
+            import numpy as np
+            stages = [joblib.load(io.BytesIO(payloads[name])) for name in ('stage1.joblib', 'stage2.joblib')]
+            if (set(stages[0].classes_) != {0, 1}
+                    or any(not isinstance(v, (int, np.integer)) for v in stages[0].classes_)
+                    or set(stages[1].classes_) != {'light', 'moderate', 'heavy'}):
+                raise ValueError('unexpected classifier classes')
+            if any(not callable(getattr(stage, 'predict', None)) for stage in stages):
+                raise ValueError('missing prediction method')
+            return cls(_LoadedStage(stages[0], digests['stage1.joblib']),
+                       _LoadedStage(stages[1], digests['stage2.joblib']), version)
         except Exception as exc:
-            error_type = type(exc).__name__
-            return cls(
-                _LoadedModel(
-                    "relevance", relevance_version, relevance_path,
-                    relevance_digest, None, error_type,
-                ),
-                _LoadedModel(
-                    "severity", severity_version, severity_path,
-                    severity_digest, None, error_type,
-                ),
-            )
-
-        return cls(
-            cls._load_one(
-                "relevance",
-                relevance_version,
-                relevance_path,
-                relevance_payload,
-                relevance_digest,
-            ),
-            cls._load_one(
-                "severity",
-                severity_version,
-                severity_path,
-                severity_payload,
-                severity_digest,
-            ),
-        )
-
-    @staticmethod
-    def _read_artifact(path: Path) -> tuple[bytes | None, str | None]:
-        try:
-            payload = path.read_bytes()
-            return payload, hashlib.sha256(payload).hexdigest()
-        except OSError:
-            return None, None
-
-    @staticmethod
-    def _load_one(
-        key: str,
-        version: str,
-        path: Path,
-        payload: bytes | None,
-        digest: str | None,
-    ) -> _LoadedModel:
-        try:
-            if payload is None or digest is None:
-                raise FileNotFoundError("model artifact is unavailable")
-            import joblib
-
-            estimator = joblib.load(io.BytesIO(payload))
-            expected = EXPECTED_CLASSES[key]
-            classes = getattr(estimator, "classes_", None)
-            if classes is None or frozenset(str(value) for value in classes) != expected:
-                raise ValueError("unexpected model classes")
-            if not callable(getattr(estimator, "predict", None)):
-                raise ValueError("model has no predict method")
-            if not callable(getattr(estimator, "predict_proba", None)):
-                raise ValueError("model has no predict_proba method")
-            return _LoadedModel(key, version, path, digest, estimator, None)
-        except Exception as exc:
-            return _LoadedModel(key, version, path, digest, None, type(exc).__name__)
+            return cls(_LoadedStage(None, digests.get('stage1.joblib'), type(exc).__name__),
+                       _LoadedStage(None, digests.get('stage2.joblib'), type(exc).__name__), version)
 
     @property
-    def artifact_manifest(self) -> dict[str, dict[str, str | None]]:
-        return {
-            key: {
-                "model_version": model.version,
-                "artifact_sha256": model.digest,
-                "status": "loaded" if model.estimator is not None else "unavailable",
-                "error_type": model.error_type,
-            }
-            for key, model in self._models.items()
-        }
+    def artifact_manifest(self) -> dict[str, dict]:
+        return {key: {
+            'model_version': f'{self.version}:{key}', 'artifact_sha256': stage.digest,
+            'status': 'loaded' if stage.estimator is not None else 'unavailable',
+            'error_type': stage.error_type, 'probabilities_available': False,
+        } for key, stage in (('relevance', self.stage1), ('severity', self.stage2))}
 
-    def predict_relevance(self, text: str) -> ModelPrediction:
-        return self._predict("relevance", text)
-
-    def predict_severity(self, text: str) -> ModelPrediction:
-        return self._predict("severity", text)
-
-    def _predict(self, key: str, text: str) -> ModelPrediction:
-        model = self._models[key]
-        if model.estimator is None or model.digest is None:
-            raise ModelArtifactError(f"{key} model unavailable: {model.error_type or 'unknown'}")
-        if not isinstance(text, str) or not text.strip():
-            raise ModelArtifactError("model input is empty or invalid")
-
+    def _predict_stage(self, stage: _LoadedStage, text: str, allowed):
+        if stage.estimator is None or stage.digest is None:
+            raise ModelArtifactError('final hybrid classifier unavailable')
         try:
-            classes = [str(value) for value in model.estimator.classes_]
-            if frozenset(classes) != EXPECTED_CLASSES[key]:
-                raise ValueError("unexpected model classes")
-            predicted = model.estimator.predict([text])
-            raw_probabilities = model.estimator.predict_proba([text])
-            if len(predicted) != 1:
-                raise ValueError("unexpected prediction count")
-            matrix = (
-                raw_probabilities.tolist()
-                if hasattr(raw_probabilities, "tolist")
-                else raw_probabilities
-            )
-            if len(matrix) != 1 or len(matrix[0]) != len(classes):
-                raise ValueError("unexpected probability shape")
-
-            scores = [float(value) for value in matrix[0]]
-            if (
-                any(not math.isfinite(value) or value < 0 or value > 1 for value in scores)
-                or not math.isclose(sum(scores), 1.0, rel_tol=1e-5, abs_tol=1e-6)
-            ):
-                raise ValueError("invalid probability values")
-            label = str(predicted[0])
-            if label not in EXPECTED_CLASSES[key]:
-                raise ValueError("unexpected predicted label")
-            if label != classes[scores.index(max(scores))]:
-                raise ValueError("predicted label disagrees with class scores")
-            probabilities = dict(zip(classes, scores, strict=True))
-            return ModelPrediction(
-                label=label,
-                probabilities=probabilities,
-                confidence=probabilities[label],
-                model_version=model.version,
-                artifact_sha256=model.digest,
-            )
+            values = stage.estimator.predict([text])
+            if len(values) != 1 or values[0] not in allowed:
+                raise ValueError('invalid classifier output')
+            return values[0]
         except Exception as exc:
-            raise ModelArtifactError(f"{key} prediction invalid: {type(exc).__name__}") from exc
+            raise ModelArtifactError(f'final hybrid prediction invalid: {type(exc).__name__}') from exc
+
+    def predict_relevance(self, raw_text: str) -> ModelPrediction:
+        value = self._predict_stage(self.stage1, _input(raw_text), {0, 1})
+        label = 'disruption' if value == 1 else 'not_disruption'
+        return ModelPrediction(label, None, None, f'{self.version}:relevance', self.stage1.digest,
+                               model_label=label)
+
+    def predict_severity(self, raw_text: str) -> ModelPrediction:
+        label = str(self._predict_stage(self.stage2, _input(raw_text), {'light', 'moderate', 'heavy'}))
+        # Existing DB enum and public API use severe. Preserve the original label.
+        return ModelPrediction(STORAGE_SEVERITY[label], None, None,
+                               f'{self.version}:severity', self.stage2.digest, model_label=label)
+
+    def predict(self, raw_text: str) -> dict[str, Any]:
+        text = _input(raw_text)
+        if self.predict_relevance(text).label == 'not_disruption':
+            return {'prediction': 'not_disruption', 'is_disruption': False}
+        return {'prediction': self.predict_severity(text).model_label, 'is_disruption': True}
+
+    def predict_many(self, raw_texts: list[str]) -> list[dict[str, Any]]:
+        if not isinstance(raw_texts, (list, tuple)):
+            raise TypeError('Batch must be a list or tuple of strings.')
+        texts = [_input(text) for text in raw_texts]
+        return [self.predict(text) for text in texts]

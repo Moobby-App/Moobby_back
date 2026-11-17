@@ -13,6 +13,7 @@ from typing import Any, Callable, Literal, Protocol
 
 from mooby.api.models import AppSource, DisruptionFeed, DisruptionItem, Readiness, StationOrSegment
 from mooby.api.repository import FeedPage, READ_ERRORS
+from mooby.api.messages import FEED_RESULTS, FEED_NO_MATCH
 
 
 @dataclass(frozen=True)
@@ -115,8 +116,7 @@ def prepare_feed(
     return feed_builder(
         availability="results" if items else "no_match",
         generated_at=page.generated_at,
-        message=("Laporan gangguan yang cocok ditemukan." if items else
-                 "Tidak ditemukan laporan gangguan aktif yang cocok untuk rute ini."),
+        message=FEED_RESULTS if items else FEED_NO_MATCH,
         items=items, limit=query.limit, offset=query.offset,
         next_offset=query.offset + query.limit if has_more else None,
     )

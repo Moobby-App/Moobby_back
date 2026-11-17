@@ -9,7 +9,7 @@ from unittest.mock import patch
 import joblib
 import sklearn
 
-from mooby.worker.classifier import ClassifierAdapter
+from mooby.worker.legacy_classifier import ClassifierAdapter
 
 
 class StubEstimator:
@@ -53,7 +53,7 @@ class ClassifierConfigTests(unittest.TestCase):
             'artifact_sha256': {'relevance': hashlib.sha256(target.read_bytes()).hexdigest()},
         })
         self.write_metrics()
-        with patch('mooby.worker.classifier.ACTIVE_CLASSIFIER_ARTIFACT_DIR', self.directory):
+        with patch('mooby.worker.legacy_classifier.ACTIVE_CLASSIFIER_ARTIFACT_DIR', self.directory):
             adapter = ClassifierAdapter.load()
         self.assertEqual(adapter.predict_relevance('sample').model_version, 'svm:v1')
         self.assertEqual(adapter.predict_severity('sample').model_version, 'original:severity')

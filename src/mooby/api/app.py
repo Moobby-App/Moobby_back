@@ -15,7 +15,8 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import Field, TypeAdapter, ValidationError
 
-from mooby.api.config import ApiConfigurationError, ApiSettings
+from mooby.api.config import ApiConfigurationError, ApiSettings, MAX_STATION_IDS
+from mooby.api.messages import FEED_UNAVAILABLE, MOCK_RESULTS, MOCK_NO_MATCH, MOCK_UNAVAILABLE
 from mooby.api.feed_cache import RedisFeedCache
 from mooby.api.push_devices import device_router
 from mooby.api.observability import (
@@ -118,7 +119,7 @@ def _unavailable_feed(limit: int, offset: int) -> JSONResponse:
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content=_feed(
             availability="source_unavailable", generated_at=None,
-            message="Informasi gangguan belum dapat diperiksa. Coba lagi.",
+            message=FEED_UNAVAILABLE,
             items=[], limit=limit, offset=offset,
         ).model_dump(mode="json"),
     )
@@ -196,7 +197,7 @@ def create_app() -> FastAPI:
     @observe_sync("endpoint_execution")
     def mock_disruptions(
         settings: Annotated[ApiSettings, Depends(_require_auth)],
-        station_ids: Annotated[list[str], Query(min_length=1, max_length=30)],
+        station_ids: Annotated[list[str], Query(min_length=1, max_length=MAX_STATION_IDS)],
         limit: Annotated[int, Query(ge=1, le=50)] = 20,
         offset: Annotated[int, Query(ge=0, le=1000)] = 0,
     ) -> DisruptionFeed | JSONResponse:
@@ -215,11 +216,7 @@ def create_app() -> FastAPI:
             return _feed(
                 availability="results" if items else "no_match",
                 generated_at=page.generated_at,
-                message=(
-                    "SIMULASI: contoh sintetis, bukan laporan gangguan nyata."
-                    if items
-                    else "SIMULASI: tidak ada contoh yang cocok untuk rute ini."
-                ),
+                message=MOCK_RESULTS if items else MOCK_NO_MATCH,
                 items=items,
                 limit=limit,
                 offset=offset,
@@ -232,7 +229,7 @@ def create_app() -> FastAPI:
                 content=_feed(
                     availability="source_unavailable",
                     generated_at=None,
-                    message="Fixture simulasi tidak tersedia. Coba lagi.",
+                    message=MOCK_UNAVAILABLE,
                     items=[],
                     limit=limit,
                     offset=offset,
@@ -243,7 +240,7 @@ def create_app() -> FastAPI:
     @observe_sync("endpoint_execution")
     def disruptions(
         settings: Annotated[ApiSettings, Depends(_require_auth)],
-        station_ids: Annotated[list[str], Query(min_length=1, max_length=30)],
+        station_ids: Annotated[list[str], Query(min_length=1, max_length=MAX_STATION_IDS)],
         limit: Annotated[int, Query(ge=1, le=50)] = 20,
         offset: Annotated[int, Query(ge=0, le=1000)] = 0,
     ) -> DisruptionFeed | JSONResponse:

@@ -195,3 +195,9 @@ Migrasi `018_app_api_original_text.sql` harus diterapkan manual di Development
 sebelum men-deploy ulang worker/API yang memakai kolom baru. Migrasi belum diterapkan
 oleh perubahan kode ini; tidak ada koneksi atau perubahan data database. Lihat
 [kontrak API](docs/app_api_development.md#original-source-text) untuk detail.
+
+## Final Hybrid TF-IDF v1.0
+
+The active KRL classifier now uses the final hierarchical Hybrid TF-IDF package.
+See [inference, deployment, label mapping and verification](docs/hybrid_tfidf_v1.md).
+Model output `heavy` is mapped to the existing database/API `severe` label.

@@ -67,6 +67,17 @@ Default flags in `.env.example` are 0. The API supervisor forwards registration
 settings only; signing key, Team ID and APNs enable flag never enter the API child.
 The NLP worker does not send notifications or require APNs credentials.
 
+Offline configuration check (never contacts APNs or PostgreSQL and never sends):
+
+```sh
+.venv/bin/python -B scripts/check_push_setup.py --env-file .env
+```
+
+This validates field presence, P-256 key format and restricted key-file permissions.
+It does not prove Apple account authorization, installed DB migration or a registered
+device. The existing key must authorize the configured topic/environment. Keep flags
+disabled until all of those checks and a designated sandbox device are ready.
+
 After migration, DB roles, credentials and a sandbox device are configured:
 
 ```sh

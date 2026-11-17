@@ -21,6 +21,22 @@ URL = f'postgresql://mooby_nlp_worker_login_dev:TEST_ONLY@db.{REF}.supabase.co/p
 
 
 class LaunchdTests(unittest.TestCase):
+    def test_missing_final_model_blocks_polling_before_database_connection(self):
+        @contextmanager
+        def locked(*args):
+            yield
+        classifier = SimpleNamespace(artifact_manifest={'relevance':{'status':'unavailable'}})
+        with patch.object(run_worker, '_arguments', return_value=SimpleNamespace(expected_project_ref=REF)), \
+             patch.dict('os.environ', {'WORKER_DATABASE_URL':URL}), \
+             patch.object(run_worker, 'single_instance', locked), \
+             patch.object(run_worker, '_process_runtime', return_value=(classifier,None)), \
+             patch.object(run_worker, '_poll') as poll, \
+             patch.object(run_worker.psycopg, 'connect') as connect:
+            with self.assertRaises(run_worker.ModelArtifactError):
+                run_worker.main()
+        poll.assert_not_called()
+        connect.assert_not_called()
+
     def test_exact_project_and_worker_principal_are_required(self):
         validate_development_url(URL, REF)
         validate_development_url(
@@ -54,7 +70,8 @@ class LaunchdTests(unittest.TestCase):
             self.assertEqual(env['HF_HUB_OFFLINE'], '1')
             envfile.write_text(envfile.read_text().replace('MOOBY_RELEVANCE_THRESHOLD=0.8',
                                                           'MOOBY_RELEVANCE_THRESHOLD=invalid'))
-            with self.assertRaises(ValueError): launchd_worker.load_configuration(config, envfile)
+            # Final LinearSVC uses predicted labels, not legacy probability thresholds.
+            launchd_worker.load_configuration(config, envfile)
             envfile.write_text('DATABASE_URL='+URL)
             with self.assertRaises(ValueError): launchd_worker.load_configuration(config, envfile)
 

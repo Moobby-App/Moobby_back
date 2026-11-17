@@ -38,8 +38,11 @@ def load_configuration(config_path=CONFIG, env_path=ROOT/'.env'):
     if not database_url:
         raise ValueError('WORKER_DATABASE_URL required in local .env')
     validate_development_url(database_url, config['expected_project_ref'])
-    for key in ('MOOBY_RELEVANCE_THRESHOLD', 'MOOBY_SEVERITY_THRESHOLD',
-                'MOOBY_TRUSTED_PUBLISHED_AT_BASES'):
+    from mooby.worker.model_config import USES_PROBABILITY_THRESHOLDS
+    required = ('MOOBY_TRUSTED_PUBLISHED_AT_BASES',)
+    if USES_PROBABILITY_THRESHOLDS:
+        required += ('MOOBY_RELEVANCE_THRESHOLD', 'MOOBY_SEVERITY_THRESHOLD')
+    for key in required:
         if not values.get(key):
             raise ValueError('worker configuration missing')
     env = {k: os.environ[k] for k in ('HOME', 'PATH', 'TMPDIR', 'LANG', 'LC_ALL') if k in os.environ}
@@ -50,7 +53,8 @@ def load_configuration(config_path=CONFIG, env_path=ROOT/'.env'):
     # modify its thresholds/publication-basis rules. This never loads a model.
     from mooby.worker.processor import WorkerSettings
     settings = WorkerSettings.from_env(env)
-    if settings.thresholds is None or settings.publication_basis_error is not None:
+    if ((USES_PROBABILITY_THRESHOLDS and settings.thresholds is None)
+            or settings.publication_basis_error is not None):
         raise ValueError('invalid worker configuration')
     return config, env
 

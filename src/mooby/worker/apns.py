@@ -23,13 +23,17 @@ class APNsSettings:
 
     @classmethod
     def from_env(cls):
-        if os.environ.get('MOOBY_APNS_ENABLED') != '1':
+        return cls.from_mapping(os.environ)
+
+    @classmethod
+    def from_mapping(cls, values, *, require_enabled=True):
+        if require_enabled and values.get('MOOBY_APNS_ENABLED') != '1':
             raise ValueError('APNs sender disabled')
-        team = os.environ.get('MOOBY_APNS_TEAM_ID','')
-        key = os.environ.get('MOOBY_APNS_KEY_ID','')
-        topic = os.environ.get('MOOBY_APNS_TOPIC','')
-        env = os.environ.get('MOOBY_APNS_ENVIRONMENT','')
-        path = Path(os.environ.get('MOOBY_APNS_KEY_PATH','')).expanduser()
+        team = values.get('MOOBY_APNS_TEAM_ID','')
+        key = values.get('MOOBY_APNS_KEY_ID','')
+        topic = values.get('MOOBY_APNS_TOPIC','')
+        env = values.get('MOOBY_APNS_ENVIRONMENT','')
+        path = Path(values.get('MOOBY_APNS_KEY_PATH','')).expanduser()
         if (not re.fullmatch(r'[A-Z0-9]{10}',team) or not re.fullmatch(r'[A-Z0-9]{10}',key)
                 or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]{1,254}',topic)
                 or env not in {'sandbox','production'} or not path.is_absolute() or not path.is_file()):

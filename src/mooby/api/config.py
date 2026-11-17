@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import os
 from collections.abc import Mapping
 
+MAX_STATION_IDS = 100
+
 
 class ApiConfigurationError(ValueError):
     pass

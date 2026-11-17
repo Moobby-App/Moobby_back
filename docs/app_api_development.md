@@ -6,7 +6,7 @@ This backend slice implements the first, route-scoped **Path A** read endpoint. 
 
 `GET /api/v1/disruptions?station_ids=open-krl:THB&station_ids=open-krl:PLM&limit=20&offset=0`
 
-- `station_ids`: 1–30 canonical `reference.krl_stations.station_id` values in the selected route; current accepted form is `open-krl:<UPPERCASE_CODE>`.
+- `station_ids`: 1–100 canonical `reference.krl_stations.station_id` values in the selected route; current accepted form is `open-krl:<UPPERCASE_CODE>`. Both normal and mock feeds accept long routes without splitting requests; 101 IDs still returns HTTP 422.
 - `limit`: 1–50, default 20.
 - `offset`: 0–1000, default 0.
 - Authorization: `Bearer` token configured server-side as `APP_API_BEARER_TOKEN`. It must be at least 32 characters. A shared token is for private Development smoke tests only; do not embed it in a distributable app.
@@ -18,7 +18,7 @@ Example response shape (synthetic values):
   "availability": "results",
   "generated_at": "2026-11-06T10:00:00Z",
   "window_hours": 24,
-  "message": "Laporan gangguan yang cocok ditemukan.",
+  "message": "Ada laporan gangguan. Lihat detailnya.",
   "items": [
     {
       "public_event_id": "00000000-0000-4000-8000-000000000001",

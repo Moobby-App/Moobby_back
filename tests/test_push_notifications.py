@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import tempfile
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -193,3 +194,35 @@ class OutboxTests(unittest.TestCase):
         self.assertIn('ON CONFLICT(event_id) DO NOTHING',sql)
         self.assertIn('AFTER INSERT OR UPDATE OF verification_status,publication_status',sql)
         self.assertNotIn('INSERT INTO notifications.outbox(event_id,initial_event_version)\nSELECT',sql)
+
+
+class OfflinePushReadinessTests(unittest.TestCase):
+    def test_missing_settings_never_contact_database_or_apns(self):
+        from scripts.check_push_setup import check
+        with patch('psycopg.connect', side_effect=AssertionError('DB forbidden')), \
+             patch.object(APNsClient, 'send', side_effect=AssertionError('push forbidden')):
+            report = check({})
+        self.assertIn('MOOBY_APNS_TEAM_ID', report['missing_settings'])
+        self.assertFalse(report['push_sent'])
+
+    def test_private_p256_key_and_dedicated_dsn_preflight_without_sending(self):
+        from scripts.check_push_setup import check
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'test.p8'
+            path.write_bytes(ec.generate_private_key(ec.SECP256R1()).private_bytes(
+                Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()))
+            path.chmod(0o600)
+            values = {'MOOBY_APNS_TEAM_ID':'A'*10, 'MOOBY_APNS_KEY_ID':'B'*10,
+                'MOOBY_APNS_TOPIC':'id.test.app', 'MOOBY_APNS_ENVIRONMENT':'sandbox',
+                'MOOBY_APNS_KEY_PATH':str(path),
+                'MOOBY_PUSH_API_DATABASE_URL':'postgresql://push_api@localhost/db',
+                'MOOBY_PUSH_SENDER_DATABASE_URL':'postgresql://push_sender@localhost/db'}
+            report = check(values)
+            self.assertTrue(report['private_key_valid'])
+            self.assertTrue(report['private_key_permissions_restricted'])
+            self.assertTrue(report['dedicated_database_settings_present'])
+            self.assertFalse(report['push_sent'])
+            values['MOOBY_PUSH_API_DATABASE_URL'] = 'postgresql://postgres@localhost/db'
+            self.assertFalse(check(values)['dedicated_database_settings_present'])

@@ -76,7 +76,7 @@ class FeedPreparationTests(IsolatedPreparationCase):
         result = prep.prepare_feed(self.query(7,3), repository.FeedPage(NOW, []))
         self.assertEqual(result.model_dump(mode="json"), {
             "availability":"no_match", "generated_at":"2026-11-15T01:02:03Z",
-            "window_hours":3, "message":"Tidak ditemukan laporan gangguan aktif yang cocok untuk rute ini.",
+            "window_hours":3, "message":"Belum ada laporan yang cocok. Cek lagi nanti.",
             "items":[], "limit":7, "offset":3, "next_offset":None,
         })
         self.assertIs(result.generated_at, NOW)

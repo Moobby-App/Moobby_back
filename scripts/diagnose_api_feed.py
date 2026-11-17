@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
 
 import psycopg
 from psycopg.rows import dict_row
-from mooby.api.config import ApiSettings
+from mooby.api.config import ApiSettings, MAX_STATION_IDS
 from mooby.api.repository import _PROJECTION_SQL, _SEARCH_SQL
 from mooby.api.app import _item
 
@@ -136,7 +136,7 @@ def main():
     parser.add_argument('--offset', type=int, default=0)
     args = parser.parse_args()
     ids = args.station_id or ['open-krl:BOO']
-    if (not 1 <= len(ids) <= 30 or any(not re.fullmatch(r'open-krl:[A-Z0-9]+', x) for x in ids)
+    if (not 1 <= len(ids) <= MAX_STATION_IDS or any(not re.fullmatch(r'open-krl:[A-Z0-9]+', x) for x in ids)
         or not 1 <= args.limit <= 50 or not 0 <= args.offset <= 1000):
         parser.error('invalid public feed filter or pagination')
     emit = lambda value: print(json.dumps(value), flush=True)

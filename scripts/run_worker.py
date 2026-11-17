@@ -17,7 +17,8 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from worker_runtime import (AlreadyRunning, emit,
                             single_instance, validate_development_url)
-from mooby.worker.processor import run_available
+from mooby.worker.processor import run_available, _process_runtime
+from mooby.worker.classifier import ModelArtifactError
 from mooby.worker.queue import enqueue_recent_snapshots
 
 
@@ -68,6 +69,9 @@ def main() -> None:
 
     validate_development_url(database_url, args.expected_project_ref)
     with single_instance(PROJECT_ROOT / '.local/worker/instance.lock'):
+        classifier, _ = _process_runtime()
+        if any(stage['status'] != 'loaded' for stage in classifier.artifact_manifest.values()):
+            raise ModelArtifactError('final Hybrid TF-IDF model unavailable')
         emit('worker_started')
         _poll(args, database_url)
 

@@ -1,0 +1,7 @@
+"""Short feed status copy; simulation remains explicit."""
+FEED_RESULTS = "Ada laporan gangguan. Lihat detailnya."
+FEED_NO_MATCH = "Belum ada laporan yang cocok. Cek lagi nanti."
+FEED_UNAVAILABLE = "Laporan belum bisa dimuat. Coba lagi nanti."
+MOCK_RESULTS = "Ini laporan simulasi. Bukan gangguan nyata."
+MOCK_NO_MATCH = "Belum ada simulasi yang cocok. Coba rute lain."
+MOCK_UNAVAILABLE = "Simulasi belum bisa dimuat. Coba lagi nanti."

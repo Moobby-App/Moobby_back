@@ -11,6 +11,9 @@ dependencies = [
     "pydantic==2.14.3",
     "psycopg[binary]>=3,<4",
     "scikit-learn==1.9.1",
+    "joblib==1.6.0",
+    "numpy==2.5.5",
+    "scipy==1.18.1",
     "redis==6.4.0",
     "uvicorn[standard]==0.54.0",
 ]
@@ -21,3 +24,6 @@ push = ["httpx[http2]>=0.28,<1", "PyJWT[crypto]>=2.10,<3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"mooby.worker" = ["artifacts/krl_hybrid_final_v1/*.joblib", "artifacts/krl_hybrid_final_v1/*.json", "artifacts/krl_hybrid_final_v1/requirements.txt"]

@@ -1,0 +1,22 @@
+{
+  "model_version": "1.0",
+  "source": "krl_hybrid_final_v1.zip",
+  "sha256": {
+    "stage1.joblib": "e6f3a7a7d689f26912b074791c5803b833b6efc9c7231f4192098437a7b69665",
+    "stage2.joblib": "353256448bb423325cf0b24ad5cc6e44827634dedc8b3fbb967b6e646a1348d6",
+    "metadata.json": "5aa939e83ed0d7cb0bc54165cd7a04309fa9fc26f42524f42b8dd15a71545ca8",
+    "requirements.txt": "985e4b484cf533265fcedf373613d224ba679dc47726aa220999d069327f433a"
+  },
+  "runtime_requirements": {
+    "scikit-learn": "1.9.1",
+    "joblib": "1.6.0",
+    "numpy": "2.5.5",
+    "scipy": "1.18.1"
+  },
+  "training_python": "3.14.3",
+  "backend_python": "3.12",
+  "storage_label_mapping": {
+    "heavy": "severe"
+  },
+  "probabilities_available": false
+}

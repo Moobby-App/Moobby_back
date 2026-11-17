@@ -293,7 +293,8 @@ def smoke_one(conn, snapshot_id, *, expected_database, expected_session_user, ch
                 'real_classifier_unavailable')
         embedding_runtime()
         settings = WorkerSettings.from_env()
-        require(settings.thresholds is not None and settings.publication_basis_error is None,
+        require((not getattr(classifier, 'uses_probability_thresholds', True)
+                 or settings.thresholds is not None) and settings.publication_basis_error is None,
                 'worker_configuration_unavailable')
         conn.stage = 'enqueue_smoke_snapshot'
         enqueued = enqueue_recent_snapshots(

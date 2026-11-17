@@ -29,7 +29,7 @@ class ErrorReadinessTests(ObservabilityTestCase):
         payload = json.loads(raw)
         self.assertEqual(payload, {
             "availability":"source_unavailable", "generated_at":None, "window_hours":3,
-            "message":"Informasi gangguan belum dapat diperiksa. Coba lagi.",
+            "message":"Laporan belum bisa dimuat. Coba lagi nanti.",
             "items":[], "limit":limit, "offset":offset, "next_offset":None,
         })
         DisruptionFeed.model_validate(payload)

@@ -544,6 +544,7 @@ def _prediction_metadata(prediction: ModelPrediction) -> dict[str, Any]:
         "confidence": prediction.confidence,
         "model_version": prediction.model_version,
         "artifact_sha256": prediction.artifact_sha256,
+        "model_label": getattr(prediction, "model_label", None) or prediction.label,
     }
 
 
@@ -560,8 +561,9 @@ def process_snapshot(
 ) -> ProcessingOutcome:
     """Classify and prepare a publication-ready draft after trusted source read.
 
-    Thresholds and accepted timestamp provenance values come from environment
-    configuration; neither has an implicit default.
+    Matching uses its existing normalization. The final model receives original
+    text and applies whitespace normalization only. Probability thresholds apply
+    only to explicitly injected probability-based compatibility adapters.
     """
     metadata: dict[str, Any] = {
         "code_version": PROCESSOR_CODE_VERSION,
@@ -681,7 +683,8 @@ def process_snapshot(
         "end_station_id": location.end_station_id,
     }
 
-    if settings.threshold_error is not None:
+    uses_thresholds = getattr(classifier, "uses_probability_thresholds", True)
+    if uses_thresholds and settings.threshold_error is not None:
         metadata["threshold_variable"] = settings.threshold_error.variable
         return _reason(
             "skipped",
@@ -690,7 +693,7 @@ def process_snapshot(
             metadata,
         )
     thresholds = settings.thresholds
-    if thresholds is None:
+    if uses_thresholds and thresholds is None:
         return _reason(
             "skipped",
             "threshold_unconfigured",
@@ -698,12 +701,13 @@ def process_snapshot(
             metadata,
         )
 
-    metadata["thresholds"] = {
-        "relevance": thresholds.relevance,
-        "severity": thresholds.severity,
-    }
+    metadata["thresholds"] = ({"relevance": thresholds.relevance,
+                               "severity": thresholds.severity} if uses_thresholds else None)
+    metadata["classification_policy"] = (
+        "probability_thresholds" if uses_thresholds else "hybrid_predict_labels_no_probabilities"
+    )
     try:
-        relevance = classifier.predict_relevance(normalized)
+        relevance = classifier.predict_relevance(snapshot.raw_text)
         metadata["relevance_prediction"] = _prediction_metadata(relevance)
     except ModelArtifactError as exc:
         metadata["model_error"] = str(exc)
@@ -714,10 +718,10 @@ def process_snapshot(
             metadata,
         )
 
-    disruption_probability = relevance.probabilities.get("disruption")
-    if disruption_probability is None:
+    if uses_thresholds and (relevance.probabilities is None or
+                            relevance.probabilities.get("disruption") is None):
         return _reason("error", "transient_model_error", "relevance_classification", metadata)
-    if relevance.confidence < thresholds.relevance:
+    if uses_thresholds and (relevance.confidence is None or relevance.confidence < thresholds.relevance):
         return _reason(
             "skipped",
             "relevance_below_threshold",
@@ -732,7 +736,7 @@ def process_snapshot(
             metadata,
         )
     try:
-        severity = classifier.predict_severity(normalized)
+        severity = classifier.predict_severity(snapshot.raw_text)
         metadata["severity_prediction"] = _prediction_metadata(severity)
     except ModelArtifactError as exc:
         metadata["model_error"] = str(exc)
@@ -743,7 +747,7 @@ def process_snapshot(
             metadata,
         )
 
-    if severity.confidence < thresholds.severity:
+    if uses_thresholds and (severity.confidence is None or severity.confidence < thresholds.severity):
         return _reason(
             "skipped",
             "severity_below_threshold",
